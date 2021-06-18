@@ -1,7 +1,8 @@
 import time
+import argparse
 import numpy as np
-from scipy.integrate import solve_ivp
 import matplotlib.pyplot as plt
+from scipy.integrate import solve_ivp
 from matplotlib import style
 from matplotlib import animation
 from collections import namedtuple
@@ -11,6 +12,7 @@ try:
     style.use(["nord-base-small", "corvid-light"])
 except OSError:
     pass
+
 
 def diffusion_fixed(t, y, alpha, dx):
 
@@ -27,6 +29,7 @@ def diffusion_fixed(t, y, alpha, dx):
 
     return y1
 
+
 def diffusion_periodic(t, y, alpha, dx):
 
     y1 = np.zeros(len(y))
@@ -39,6 +42,7 @@ def diffusion_periodic(t, y, alpha, dx):
     y1[-1] = alpha * (y[-2] - 2 * y[-1] + y[0]) / dx ** 2
 
     return y1
+
 
 def diffusion_periodic_split(t, y, alpha, mesh):
 
@@ -56,88 +60,137 @@ def diffusion_periodic_split(t, y, alpha, mesh):
 
     return y1
 
+
+MODEL_LIST = {
+    "diff_f": diffusion_fixed,
+    "diff_p": diffusion_periodic,
+    "diff_p_split": diffusion_periodic_split,
+}
+
 if __name__ == "__main__":
 
-    if False:
-        # Non-split scenario
+    parser = argparse.ArgumentParser(
+        description="Multiblock TestBench - MSc Fusion Energy project"
+    )
+    parser.add_argument("model", help="The model to solve for", choices=MODEL_LIST)
+    parser.add_argument(
+        "-a",
+        "--anim",
+        help="Show an animated plots of the temperture over time",
+        action="store_true",
+    )
+    parser.add_argument(
+        "-i", "--imshow", help="Show 2D plot of position vs time", action="store_true"
+    )
+    parser.add_argument(
+        "-l",
+        "--line",
+        help="Show line plot with three different times",
+        action="store_true",
+    )
+    parser.add_argument(
+        "--time",
+        help="The time to solve up to",
+        type=int,
+        default=3000,
+    )
+    parser.add_argument(
+        "--dx",
+        help="The cell width. The split model will use this as the larger width",
+        type=float,
+        default=1,
+    )
+    parser.add_argument(
+        "--solver",
+        help="The solver method solve_ivp should use",
+        default="RK45",
+    )
+    args = parser.parse_args()
 
-        y = np.zeros(200)
-        y[25] = 1000
-        alpha = 1
-        dx = 0.5
-
-        solver_start_time = time.perf_counter()
-        solver = solve_ivp(diffusion_periodic, (0, 2000), y, args=(alpha, dx), method="RK45")
-        solver_elapsed_time = time.perf_counter() - solver_start_time
-
-        energy_array = np.sum(solver.y, axis=0) * 0.5
-    else:
-        # Split scenario
-
-        y = np.zeros(150)
-        y[25] = 1000
-        alpha = 1
+    if args.model == "diff_p_split":
+        num_cells = 150
         Submesh = namedtuple("Submesh", "start end dx")
         # rough description of the mesh made of submeshes with different cell widths
-        split_mesh = [Submesh(1,50,1), Submesh(50,149,0.5)]
+        mesh_descrip = [Submesh(1, 50, args.dx), Submesh(50, 149, args.dx / 2)]
+    else:
+        num_cells = 200
+        mesh_descrip = args.dx
 
-        solver_start_time = time.perf_counter()
-        solver = solve_ivp(diffusion_periodic_split, (0, 2000), y, args=(alpha, split_mesh), method="RK45")
-        solver_elapsed_time = time.perf_counter() - solver_start_time
-        
-        # Calculate the total energy for each timestep
+    y = np.zeros(num_cells)
+    y[25] = 1000
+    alpha = 1
+
+    solver_start_time = time.perf_counter()
+    solver = solve_ivp(
+        MODEL_LIST[args.model],
+        (0, args.time),
+        y,
+        args=(alpha, mesh_descrip),
+        method=args.solver,
+    )
+    solver_elapsed_time = time.perf_counter() - solver_start_time
+
+    # Calculate the total energy for each timestep
+    if args.model == "diff_p_split":
         energy_array = np.zeros(len(solver.t))
-        for m in split_mesh:
-            energy_array[:] += np.sum(solver.y[m.start:m.end,:], axis=0) * m.dx
+        for m in mesh_descrip:
+            energy_array[:] += np.sum(solver.y[m.start : m.end, :], axis=0) * m.dx
         # The boundary cells are currently not included in the mesh description
-        energy_array[:] += solver.y[0,:] * 1
-        energy_array[:] += solver.y[-1,:] * 0.5
+        energy_array[:] += solver.y[0, :] * mesh_descrip[0].dx
+        energy_array[:] += solver.y[-1, :] * mesh_descrip[-1].dx
+    else:
+        energy_array = np.sum(solver.y, axis=0) * args.dx
 
-        
     print(solver)
     print(f"Elapsed time for solver was {solver_elapsed_time} seconds")
     print("Start energy", energy_array[0], "end energy", energy_array[-1])
     print("Energy diff", energy_array[-1] - energy_array[0])
 
-    # Various plotting stuff this point onward
+    # Start of plots
 
-    if True:
-        plt.imshow(
-            solver.y,
-            cmap="inferno",
-            aspect="auto",
-            interpolation="none"
-        )
+    if args.imshow:
+        # 2D plot of the cell index against time
+        plt.imshow(solver.y, cmap="inferno", aspect="auto", interpolation="none")
 
         plt.colorbar()
 
         plt.xlabel("Time")
-        plt.ylabel("Position")
-
+        plt.ylabel("Cell index")  # Cell index arn't corrected to positions yet
+        plt.grid(None)
         plt.show()
 
-    if True:
-        print(len(solver.t))
+    if args.anim:
+        # Plot of the cell index streched to 2D and animated per timestep
         fig, ax = plt.subplots()
         frames = []
-        for step in range(0,len(solver.t),100):
-            frames.append([ax.imshow(
-                    np.expand_dims(solver.y[:,step], axis=0),
-                    cmap="inferno",
-                    animated=True,
-                    aspect="auto"
-                )]
+        step = 50 if len(solver.t) > 1000 else 1
+        for step in range(0, len(solver.t), step):
+            frames.append(
+                [
+                    ax.imshow(
+                        np.expand_dims(solver.y[:, step], axis=0),
+                        cmap="inferno",
+                        animated=True,
+                        aspect="auto",
+                    )
+                ]
             )
-        ani = animation.ArtistAnimation(fig, frames, interval=60, blit=True, repeat_delay=2000)
+        ani = animation.ArtistAnimation(
+            fig, frames, interval=20, blit=True, repeat_delay=5000
+        )
 
         # ani.save("out.gif", writer='imagemagick')
 
         plt.show()
 
-    plt.plot(solver.y[:,-1])
-    plt.plot(solver.y[:,0])
+    if args.line:
+        # Line plot of the temperture against cell index for three points in time
+        plt.plot(solver.y[:, 10])
+        plt.plot(solver.y[:, 500])
+        plt.plot(solver.y[:, -1])
 
-    plt.xlabel("Cell") # Cell index arn't corrected to positions yet
-    plt.ylabel("Value (\"Temperture\")")
+        # TODO Add a legend
 
-    plt.show()
+        plt.xlabel("Cell index")  # Cell index arn't corrected to positions yet
+        plt.ylabel('Value ("Temperture")')
+        plt.show()
