@@ -55,8 +55,8 @@ def diffusion_periodic_split(t, y, alpha, mesh):
             y1[i] = alpha * (y[i - 1] - 2 * y[i] + y[i + 1]) / m.dx ** 2
 
     # Apply periodic boundary condition - dx is currently hardcoded here
-    y1[0] = alpha * (y[-1] - 2 * y[0] + y[1]) / 1 ** 2
-    y1[-1] = alpha * (y[-2] - 2 * y[-1] + y[0]) / 0.5 ** 2
+    y1[0] = alpha * (y[-1] - 2 * y[0] + y[1]) / mesh[0].dx ** 2
+    y1[-1] = alpha * (y[-2] - 2 * y[-1] + y[0]) / mesh[-1].dx ** 2
 
     return y1
 
@@ -76,7 +76,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "-a",
         "--anim",
-        help="Show an animated plots of the temperture over time",
+        help="Show an animated plot of the temperature over time",
         action="store_true",
     )
     parser.add_argument(
@@ -89,35 +89,51 @@ if __name__ == "__main__":
         action="store_true",
     )
     parser.add_argument(
+        "-s",
+        "--scatter",
+        help="Show scatter plot at two time points",
+        action="store_true",
+    )
+    parser.add_argument(
         "--time",
-        help="The time to solve up to",
+        help="The time to solve up to. Default is 3000",
         type=int,
         default=3000,
     )
     parser.add_argument(
         "--dx",
-        help="The cell width. The split model will use this as the larger width",
+        help="The cell width in meters. Default is 0.01m. The split model will use this as the larger width",
         type=float,
-        default=1,
+        default=0.01,
     )
     parser.add_argument(
         "--solver",
-        help="The solver method solve_ivp should use",
+        help="The solver method solve_ivp should use. Default is RK45.",
         default="RK45",
     )
     args = parser.parse_args()
 
+    length = 1  # meters
+
     if args.model == "diff_p_split":
-        num_cells = 150
+
+        split_pos = 0.5  # meters
+        num_left_cells = int(split_pos / args.dx)
+        num_right_cells = int((length - split_pos) / (args.dx / 2))
+
         Submesh = namedtuple("Submesh", "start end dx")
         # rough description of the mesh made of submeshes with different cell widths
-        mesh_descrip = [Submesh(1, 50, args.dx), Submesh(50, 149, args.dx / 2)]
+        mesh_descrip = [
+            Submesh(1, num_left_cells, args.dx),
+            Submesh(num_left_cells, num_left_cells + num_right_cells - 1, args.dx / 2),
+        ]
+        num_cells = num_left_cells + num_right_cells
     else:
-        num_cells = 200
+        num_cells = int(length / args.dx)
         mesh_descrip = args.dx
 
     y = np.zeros(num_cells)
-    y[25] = 1000
+    y[40] = 1000
     alpha = 1
 
     solver_start_time = time.perf_counter()
@@ -130,7 +146,7 @@ if __name__ == "__main__":
     )
     solver_elapsed_time = time.perf_counter() - solver_start_time
 
-    # Calculate the total energy for each timestep
+    # Calculate the total energy for each timestep and the position of each cell
     if args.model == "diff_p_split":
         energy_array = np.zeros(len(solver.t))
         for m in mesh_descrip:
@@ -138,8 +154,19 @@ if __name__ == "__main__":
         # The boundary cells are currently not included in the mesh description
         energy_array[:] += solver.y[0, :] * mesh_descrip[0].dx
         energy_array[:] += solver.y[-1, :] * mesh_descrip[-1].dx
+
+        cell_pos = np.zeros(num_cells)
+        cell_pos[0 : mesh_descrip[0].end] = np.linspace(
+            args.dx / 2, split_pos - (mesh_descrip[0].dx / 2), num_left_cells
+        )
+        cell_pos[mesh_descrip[1].start : mesh_descrip[1].end + 1] = np.linspace(
+            split_pos + (mesh_descrip[1].dx / 2),
+            length - (mesh_descrip[1].dx / 2),
+            num_right_cells,
+        )
     else:
         energy_array = np.sum(solver.y, axis=0) * args.dx
+        cell_pos = np.linspace(args.dx / 2, length - (args.dx / 2), num_cells)
 
     print(solver)
     print(f"Elapsed time for solver was {solver_elapsed_time} seconds")
@@ -184,13 +211,24 @@ if __name__ == "__main__":
         plt.show()
 
     if args.line:
-        # Line plot of the temperture against cell index for three points in time
-        plt.plot(solver.y[:, 10])
-        plt.plot(solver.y[:, 500])
-        plt.plot(solver.y[:, -1])
+        # Line plot of the temperture against cell position for three points in time
+        plt.plot(
+            cell_pos, solver.y[:, 10], label=f"$t={solver.t[10]:.3e}$", linestyle="--"
+        )
+        plt.plot(cell_pos, solver.y[:, 40], label=f"$t={solver.t[40]:.3e}$")
+        plt.plot(
+            cell_pos, solver.y[:, -1], label=f"$t={solver.t[-1]:.3e}$", linestyle=":"
+        )
 
-        # TODO Add a legend
+        plt.legend()
+        plt.xlabel("Position")
+        plt.ylabel("Temperture")
+        plt.show()
 
-        plt.xlabel("Cell index")  # Cell index arn't corrected to positions yet
-        plt.ylabel('Value ("Temperture")')
+    if args.scatter:
+        plt.scatter(cell_pos, solver.y[:, 10], label=f"$t={solver.t[10]:.3e}$", marker="D")
+        plt.scatter(cell_pos, solver.y[:, 40], label=f"$t={solver.t[40]:.3e}$")
+        plt.legend()
+        plt.xlabel("Position")
+        plt.ylabel("Temperture")
         plt.show()
