@@ -44,21 +44,80 @@ def diffusion_periodic(t, y, alpha, dx):
     return y1
 
 
-def diffusion_periodic_split(t, y, alpha, mesh):
+def diffusion_periodic_split(t, y, alpha, dx, J):
 
     y1 = np.zeros(len(y))
 
-    # Loop though "submesh" descriptions
-    for m in mesh:
-        # Loop though the cells for that submesh
-        for i in range(m.start, m.end):
-            y1[i] = alpha * (y[i - 1] - 2 * y[i] + y[i + 1]) / m.dx ** 2
+    for i in range(1, len(y) - 1):
+        # LEFT
+        alpha_grad = (alpha[i] + alpha[i - 1]) / 2
+        J_grad = (J[i][i] + J[i][i - 1]) / 2
+        gradient = 2 * (y[i - 1] - y[i]) / (dx[i - 1] + dx[i])
+        flux = alpha_grad * J_grad * gradient
 
-    # Apply periodic boundary condition - dx is currently hardcoded here
-    y1[0] = alpha * (y[-1] - 2 * y[0] + y[1]) / mesh[0].dx ** 2
-    y1[-1] = alpha * (y[-2] - 2 * y[-1] + y[0]) / mesh[-1].dx ** 2
+        y1[i] += flux / (dx[i] * J_grad)
+
+        # RIGHT
+        alpha_grad = (alpha[i] + alpha[i + 1]) / 2
+        J_grad = (J[i][i] + J[i][i + 1]) / 2
+        gradient = 2 * (y[i] - y[i + 1]) / (dx[i + 1] + dx[i])
+        flux = alpha_grad * J_grad * gradient
+
+        y1[i] -= flux / (dx[i] * J_grad)
+
+    # Left boundary
+    # LEFT
+    alpha_grad = (alpha[0] + alpha[-1]) / 2
+    J_grad = (J[0][0] + J[0][-1]) / 2
+    gradient = 2 * (y[-1] - y[0]) / (dx[-1] + dx[0])
+    flux = alpha_grad * J_grad * gradient
+
+    y1[0] += flux / (dx[0] * J_grad)
+
+    # RIGHT
+    alpha_grad = (alpha[0] + alpha[1]) / 2
+    J_grad = (J[0][0] + J[0][1]) / 2
+    gradient = 2 * (y[0] - y[1]) / (dx[1] + dx[0])
+    flux = alpha_grad * J_grad * gradient
+
+    y1[0] -= flux / (dx[0] * J_grad)
+
+    # Right boundary
+    # LEFT
+    alpha_grad = (alpha[-1] + alpha[-2]) / 2
+    J_grad = (J[-1][-1] + J[-1][-2]) / 2
+    gradient = 2 * (y[-2] - y[-1]) / (dx[-2] + dx[-1])
+    flux = alpha_grad * J_grad * gradient
+
+    y1[-1] += flux / (dx[-1] * J_grad)
+
+    # RIGHT
+    alpha_grad = (alpha[-1] + alpha[0]) / 2
+    J_grad = (J[-1][-1] + J[-1][0]) / 2
+    gradient = 2 * (y[-1] - y[0]) / (dx[0] + dx[-1])
+    flux = alpha_grad * J_grad * gradient
+
+    y1[-1] -= flux / (dx[-1] * J_grad)
 
     return y1
+
+
+def calc_jacobian(num_cells, alpha, dx):
+    jec = np.zeros((num_cells, num_cells))
+
+    for i in range(1, num_cells - 1):
+        jec[i, i - 1] = alpha[i] / dx[i] ** 2
+        jec[i, i] = -2 * alpha[i] / dx[i] ** 2
+        jec[i, i + 1] = alpha[i] / dx[i] ** 2
+
+    # Left boundary
+    jec[0, -1] = jec[0, 1] = alpha[0] / dx[0] ** 2
+    jec[0, 0] = -2 * alpha[0] / dx[0] ** 2
+    # Right boundary
+    jec[-1, -2] = jec[-1, 0] = alpha[-1] / dx[-1] ** 2
+    jec[-1, -1] = -2 * alpha[-1] / dx[-1] ** 2
+
+    return jec
 
 
 MODEL_LIST = {
@@ -66,6 +125,8 @@ MODEL_LIST = {
     "diff_p": diffusion_periodic,
     "diff_p_split": diffusion_periodic_split,
 }
+
+Submesh = namedtuple("Submesh", "start end dx alpha")
 
 if __name__ == "__main__":
 
@@ -121,28 +182,43 @@ if __name__ == "__main__":
         num_left_cells = int(split_pos / args.dx)
         num_right_cells = int((length - split_pos) / (args.dx / 2))
 
-        Submesh = namedtuple("Submesh", "start end dx")
         # rough description of the mesh made of submeshes with different cell widths
         mesh_descrip = [
-            Submesh(1, num_left_cells, args.dx),
-            Submesh(num_left_cells, num_left_cells + num_right_cells - 1, args.dx / 2),
+            Submesh(1, num_left_cells, args.dx, 1),
+            Submesh(
+                num_left_cells, num_left_cells + num_right_cells - 1, args.dx / 2, 1
+            ),
+            #  Submesh(num_left_cells, num_left_cells + num_right_cells - 1, args.dx),
         ]
         num_cells = num_left_cells + num_right_cells
     else:
         num_cells = int(length / args.dx)
-        mesh_descrip = args.dx
+        mesh_descrip = [Submesh(1, num_cells - 1, args.dx, 1)]
 
+    dx_array = np.empty(num_cells)
+    alpha_array = np.empty(num_cells)
+    for mesh in mesh_descrip:
+        dx_array[mesh.start : mesh.end] = mesh.dx
+        alpha_array[mesh.start : mesh.end] = mesh.alpha
+    dx_array[0] = mesh_descrip[0].dx
+    dx_array[-1] = mesh_descrip[-1].dx
+    alpha_array[0] = mesh_descrip[0].alpha
+    alpha_array[-1] = mesh_descrip[-1].alpha
     y = np.zeros(num_cells)
     y[40] = 1000
-    alpha = 1
+    # alpha = 1
+
+    if args.model == "diff_p_split":
+        J = calc_jacobian(num_cells, alpha_array, dx_array)
 
     solver_start_time = time.perf_counter()
     solver = solve_ivp(
         MODEL_LIST[args.model],
         (0, args.time),
         y,
-        args=(alpha, mesh_descrip),
+        args=(alpha_array, dx_array, J),
         method=args.solver,
+        jac=J,
     )
     solver_elapsed_time = time.perf_counter() - solver_start_time
 
@@ -226,9 +302,13 @@ if __name__ == "__main__":
         plt.show()
 
     if args.scatter:
-        plt.scatter(cell_pos, solver.y[:, 10], label=f"$t={solver.t[10]:.3e}$", marker="D")
+        plt.scatter(
+            cell_pos, solver.y[:, 10], label=f"$t={solver.t[10]:.3e}$", marker="D"
+        )
         plt.scatter(cell_pos, solver.y[:, 40], label=f"$t={solver.t[40]:.3e}$")
         plt.legend()
         plt.xlabel("Position")
         plt.ylabel("Temperture")
+        if args.model == "diff_p_split":
+            plt.axvline(split_pos, 0, 1)
         plt.show()
