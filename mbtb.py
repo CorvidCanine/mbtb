@@ -35,11 +35,69 @@ def diffusion_periodic(t, y, alpha, dx):
     y1 = np.zeros(len(y))
 
     for i in range(1, len(y) - 1):
-        y1[i] = alpha * (y[i - 1] - 2 * y[i] + y[i + 1]) / dx ** 2
+        # y1[i] = alpha * (y[i - 1] - 2 * y[i] + y[i + 1]) / ((dx[i-1]+dx[i+1])/2 + dx[i]) ** 2
+        y1[i] = (alpha[i] * (y[i + 1] - y[i]) / ((dx[i + 1] + dx[i]) / 2) ** 2) + (
+            alpha[i] * (y[i - 1] - y[i]) / ((dx[i - 1] + dx[i]) / 2) ** 2
+        )
+        # print(f"cell {i}, left {(dx[i-1] + dx[i]) / 2}, right {(dx[i+1] + dx[i]) / 2 }")
 
-    # Apply periodic boundary condition
-    y1[0] = alpha * (y[-1] - 2 * y[0] + y[1]) / dx ** 2
-    y1[-1] = alpha * (y[-2] - 2 * y[-1] + y[0]) / dx ** 2
+    y1[0] = (alpha[0] * (y[1] - y[0]) / ((dx[1] + dx[0]) / 2) ** 2) + (
+        alpha[0] * (y[-1] - y[0]) / ((dx[-1] + dx[0]) / 2) ** 2
+    )
+    y1[-1] = (alpha[-1] * (y[0] - y[-1]) / ((dx[0] + dx[-1]) / 2) ** 2) + (
+        alpha[-1] * (y[-2] - y[-1]) / ((dx[-2] + dx[-1]) / 2) ** 2
+    )
+
+    return y1
+
+
+def diffusion_chimaera(t, y, grids, J):
+
+    y1 = np.zeros(len(y))
+
+    for grid in grids:
+
+        left_alpha = (grid.alpha[1:] + grid.alpha[:-1]) / 2
+        left_J = (np.diagonal(J)[1:] + np.diagonal(J, offset=-1)) / 2
+        left_gradient = (
+            2
+            * (y[grid.left : grid.right - 1] - y[grid.left + 1 : grid.right])
+            / (grid.dx[:-1] + grid.dx[1:])
+        )
+        left_flux = left_alpha * left_J * left_gradient
+        y1[grid.left + 1 : grid.right] += left_flux / (grid.dx[1:] * left_J)
+
+        right_alpha = (grid.alpha[:-1] + grid.alpha[1:]) / 2
+        right_J = (np.diagonal(J)[:-1] + np.diagonal(J, offset=1)) / 2
+        right_gradient = (
+            2
+            * (y[grid.left : grid.right - 1] - y[grid.left + 1 : grid.right])
+            / (grid.dx[1:] + grid.dx[:-1])
+        )
+        right_flux = right_alpha * right_J * right_gradient
+        y1[grid.left : grid.right - 1] -= right_flux / (grid.dx[:-1] * right_J)
+
+        if grid.leftboundary.type == "periodic":
+            left_alpha = (grid.alpha[0] + grid.alpha[-1]) / 2
+            left_J = (J[0][0] + J[0][-1]) / 2
+            left_gradient = (
+                2 * (y[grid.right - 1] - y[grid.left]) / (grid.dx[-1] + grid.dx[0])
+            )
+            left_flux = left_alpha * left_J * left_gradient
+            y1[grid.left] += left_flux / (grid.dx[0] * left_J)
+        elif grid.leftboundary.type == "constant":
+            y1[grid.left] = grid.leftboundary.value
+
+        if grid.rightboundary.type == "periodic":
+            right_alpha = (grid.alpha[-1] + grid.alpha[0]) / 2
+            right_J = (J[-1][-1] + J[-1][0]) / 2
+            right_gradient = (
+                2 * (y[grid.right - 1] - y[grid.left]) / (grid.dx[0] + grid.dx[-1])
+            )
+            right_flux = right_alpha * right_J * right_gradient
+            y1[grid.right - 1] -= right_flux / (grid.dx[-1] * right_J)
+        elif grid.leftboundary.type == "constant":
+            y1[grid.right - 1] = grid.rightboundary.value
 
     return y1
 
@@ -120,10 +178,36 @@ def calc_jacobian(num_cells, alpha, dx):
     return jec
 
 
+def calc_jacobian_chimaera(num_cells, grids):
+    jec = np.zeros((num_cells, num_cells))
+
+    for grid in grids:
+
+        for i in range(grid.left + 1, grid.right - 1):
+            jec[i, i - 1] = grid.alpha[i] / grid.dx[i] ** 2
+            jec[i, i] = -2 * grid.alpha[i] / grid.dx[i] ** 2
+            jec[i, i + 1] = grid.alpha[i] / grid.dx[i] ** 2
+
+        if grid.leftboundary.type == "periodic":
+            jec[grid.left, grid.right - 1] = jec[grid.left, grid.left + 1] = (
+                grid.alpha[0] / grid.dx[0] ** 2
+            )
+            jec[grid.left, grid.left] = -2 * grid.alpha[0] / grid.dx[0] ** 2
+
+        if grid.rightboundary.type == "periodic":
+            jec[grid.right - 1, grid.right - 2] = jec[grid.right - 1, grid.left] = (
+                grid.alpha[-1] / grid.dx[-1] ** 2
+            )
+            jec[grid.right - 1, grid.right - 1] = -2 * grid.alpha[-1] / grid.dx[-1] ** 2
+
+    return jec
+
+
 MODEL_LIST = {
     "diff_f": diffusion_fixed,
     "diff_p": diffusion_periodic,
     "diff_p_split": diffusion_periodic_split,
+    "diff_chimaera": diffusion_chimaera,
 }
 
 Submesh = namedtuple("Submesh", "start end dx alpha")
@@ -176,8 +260,8 @@ if __name__ == "__main__":
 
     length = 1  # meters
 
-    if args.model == "diff_p_split":
-
+    if args.model == "diff_p_split" or args.model == "diff_chimaera":
+        # TODO Temporarily runs for chimaera as well
         split_pos = 0.5  # meters
         num_left_cells = int(split_pos / args.dx)
         num_right_cells = int((length - split_pos) / (args.dx / 2))
@@ -208,22 +292,41 @@ if __name__ == "__main__":
     y[40] = 1000
     # alpha = 1
 
-    if args.model == "diff_p_split":
-        J = calc_jacobian(num_cells, alpha_array, dx_array)
+    # if args.model == "diff_p_split":
+    J = calc_jacobian(num_cells, alpha_array, dx_array)
+
+    if args.model == "diff_chimaera":
+        # TODO This section is temporary
+        Grid = namedtuple("Grid", "left right dx alpha leftboundary rightboundary")
+        Boundary = namedtuple("Boundary", "type")
+        main = Grid(
+            0,
+            num_cells,
+            dx_array,
+            alpha_array,
+            Boundary("periodic"),
+            Boundary("periodic"),
+        )
+
+        J = calc_jacobian_chimaera(num_cells, [main])
+
+        solver_args = ([main], J)
+    else:
+        solver_args = (alpha_array, dx_array, J)
 
     solver_start_time = time.perf_counter()
     solver = solve_ivp(
         MODEL_LIST[args.model],
         (0, args.time),
         y,
-        args=(alpha_array, dx_array, J),
+        args=solver_args,
         method=args.solver,
         jac=J,
     )
     solver_elapsed_time = time.perf_counter() - solver_start_time
 
     # Calculate the total energy for each timestep and the position of each cell
-    if args.model == "diff_p_split":
+    if args.model == "diff_p_split" or args.model == "diff_chimaera":
         energy_array = np.zeros(len(solver.t))
         for m in mesh_descrip:
             energy_array[:] += np.sum(solver.y[m.start : m.end, :], axis=0) * m.dx
