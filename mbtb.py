@@ -65,7 +65,17 @@ def diffusion_chimaera(t, y, grids, J):
             / (grid.dx[:-1] + grid.dx[1:])
         )
         left_flux = left_alpha * left_J * left_gradient
-        y1[grid.left + 1 : grid.right] += left_flux / (grid.dx[1:] * left_J)
+
+        y1[grid.left + 1 : grid.right] += (
+            left_flux / (grid.dx[1:] * left_J) * grid.active[1:] * grid.active[:-1]
+        )
+
+        # y1[grid.left + 1 : grid.right] += np.divide(
+        #     left_flux,
+        #     grid.dx[1:] * left_J,
+        #     out=np.zeros_like(left_flux),
+        #     where=(grid.active[1:] & (grid.active[:-1]),
+        # )
 
         right_alpha = (grid.alpha[:-1] + grid.alpha[1:]) / 2
         right_J = (np.diagonal(J)[:-1] + np.diagonal(J, offset=1)) / 2
@@ -75,7 +85,17 @@ def diffusion_chimaera(t, y, grids, J):
             / (grid.dx[1:] + grid.dx[:-1])
         )
         right_flux = right_alpha * right_J * right_gradient
-        y1[grid.left : grid.right - 1] -= right_flux / (grid.dx[:-1] * right_J)
+        y1[grid.left : grid.right - 1] -= (
+            right_flux / (grid.dx[:-1] * right_J) * grid.active[:-1] * grid.active[1:]
+        )
+
+        # y1[grid.left : grid.right - 1] -= np.divide(
+        #     right_flux,
+        #     grid.dx[:-1] * right_J,
+        #     out=np.zeros_like(right_flux),
+        #     where=((grid.active[:-1] != 0)),
+        #     # where=(right_J!=0),
+        # )
 
         if grid.leftboundary.type == "periodic":
             left_alpha = (grid.alpha[0] + grid.alpha[-1]) / 2
@@ -98,6 +118,9 @@ def diffusion_chimaera(t, y, grids, J):
             y1[grid.right - 1] -= right_flux / (grid.dx[-1] * right_J)
         elif grid.leftboundary.type == "constant":
             y1[grid.right - 1] = grid.rightboundary.value
+
+    # print("y", y[grids[0].active == 0])
+    # print("y1", y1[grids[0].active == 0])
 
     return y1
 
@@ -184,21 +207,56 @@ def calc_jacobian_chimaera(num_cells, grids):
     for grid in grids:
 
         for i in range(grid.left + 1, grid.right - 1):
-            jec[i, i - 1] = grid.alpha[i] / grid.dx[i] ** 2
-            jec[i, i] = -2 * grid.alpha[i] / grid.dx[i] ** 2
-            jec[i, i + 1] = grid.alpha[i] / grid.dx[i] ** 2
+            # if grid.active[i - 1] == 1:
+            left_alpha_grad = (grid.alpha[i] + grid.alpha[i - 1]) / 2
+            jec[i, i - 1] = left_alpha_grad / ((grid.dx[i - 1] + grid.dx[i]) / 2) ** 2
+            # else:
+            #     jec[i, i - 1] = 1
+
+            # if grid.active[i + 1] == 1:
+            right_alpha_grad = (grid.alpha[i] + grid.alpha[i + 1]) / 2
+            jec[i, i + 1] = right_alpha_grad / (
+                ((grid.dx[i + 1] + grid.dx[i]) / 2) ** 2
+            )
+            # else:
+            #     jec[i, i + 1] = 1
+
+            # if grid.active[i] == 1:
+            jec[i, i] = -(jec[i, i - 1] + jec[i, i + 1])
+            # else:
+            #     jec[i, i] = 1
 
         if grid.leftboundary.type == "periodic":
-            jec[grid.left, grid.right - 1] = jec[grid.left, grid.left + 1] = (
-                grid.alpha[0] / grid.dx[0] ** 2
+            left_alpha_grad = (grid.alpha[grid.left] + grid.alpha[grid.right - 1]) / 2
+            jec[grid.left, grid.right - 1] = (
+                left_alpha_grad
+                / ((grid.dx[grid.right - 1] + grid.dx[grid.left]) / 2) ** 2
             )
-            jec[grid.left, grid.left] = -2 * grid.alpha[0] / grid.dx[0] ** 2
+            right_alpha_grad = (grid.alpha[grid.left] + grid.alpha[grid.left + 1]) / 2
+            jec[grid.left, grid.left + 1] = (
+                right_alpha_grad
+                / ((grid.dx[grid.left + 1] + grid.dx[grid.left]) / 2) ** 2
+            )
+            jec[grid.left, grid.left] = -(
+                jec[grid.left, grid.right - 1] + jec[grid.left, grid.left + 1]
+            )
 
         if grid.rightboundary.type == "periodic":
-            jec[grid.right - 1, grid.right - 2] = jec[grid.right - 1, grid.left] = (
-                grid.alpha[-1] / grid.dx[-1] ** 2
+            left_alpha_grad = (
+                grid.alpha[grid.right - 1] + grid.alpha[grid.right - 2]
+            ) / 2
+            jec[grid.right - 1, grid.right - 2] = (
+                left_alpha_grad
+                / ((grid.dx[grid.right - 2] + grid.dx[grid.right - 1]) / 2) ** 2
             )
-            jec[grid.right - 1, grid.right - 1] = -2 * grid.alpha[-1] / grid.dx[-1] ** 2
+            right_alpha_grad = (grid.alpha[grid.right - 1] + grid.alpha[grid.left]) / 2
+            jec[grid.right - 1, grid.left] = (
+                right_alpha_grad
+                / ((grid.dx[grid.left] + grid.dx[grid.right - 1]) / 2) ** 2
+            )
+            jec[grid.right - 1, grid.right - 1] = -(
+                jec[grid.right - 1, grid.right - 2] + jec[grid.right - 1, grid.left]
+            )
 
     return jec
 
@@ -297,13 +355,18 @@ if __name__ == "__main__":
 
     if args.model == "diff_chimaera":
         # TODO This section is temporary
-        Grid = namedtuple("Grid", "left right dx alpha leftboundary rightboundary")
+        Grid = namedtuple(
+            "Grid", "left right dx alpha active leftboundary rightboundary"
+        )
         Boundary = namedtuple("Boundary", "type")
+        active_cells = np.ones(num_cells)
+        active_cells[75:100] = 0
         main = Grid(
             0,
             num_cells,
             dx_array,
             alpha_array,
+            active_cells,
             Boundary("periodic"),
             Boundary("periodic"),
         )
@@ -321,7 +384,7 @@ if __name__ == "__main__":
         y,
         args=solver_args,
         method=args.solver,
-        jac=J,
+        # jac=J,
     )
     solver_elapsed_time = time.perf_counter() - solver_start_time
 
@@ -409,6 +472,9 @@ if __name__ == "__main__":
             cell_pos, solver.y[:, 10], label=f"$t={solver.t[10]:.3e}$", marker="D"
         )
         plt.scatter(cell_pos, solver.y[:, 40], label=f"$t={solver.t[40]:.3e}$")
+        plt.scatter(
+            cell_pos, solver.y[:, -1], label=f"$t={solver.t[-1]:.3e}$", marker="x"
+        )
         plt.legend()
         plt.xlabel("Position")
         plt.ylabel("Temperture")
