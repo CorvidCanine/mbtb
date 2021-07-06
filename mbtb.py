@@ -1,17 +1,190 @@
 import time
 import argparse
+import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
 from matplotlib import style
 from matplotlib import animation
 from collections import namedtuple
+from enum import Enum, auto
 
 try:
     # Load custom matplotlib style if it's avalible
     style.use(["nord-base-small", "corvid-light"])
 except OSError:
     pass
+
+
+class Boundary(Enum):
+    PERIODIC = auto()
+    WALL = auto()
+    IGNORE = auto()
+    CONSTANT = auto()
+
+
+class Overlap:
+    def __init__(self, lower_grid, over_grid, num_fringe_cells=1):
+        self.lower_grid = lower_grid
+        self.over_grid = over_grid
+
+        if num_fringe_cells < 1:
+            raise ValueError("The number of overlap cells must be at least 1")
+
+        self.num_fringe_cells = num_fringe_cells
+
+        self.lower_grid.cut_hole(
+            self.over_grid.left_pos, self.over_grid.right_pos, num_fringe_cells
+        )
+
+        left_cut_index = self.lower_grid.position_to_cell(self.over_grid.left_pos)
+        self.lower_left_interp_range = (
+            left_cut_index,
+            left_cut_index + num_fringe_cells + 1,
+        )
+        self.lower_left_fringe_range = (
+            left_cut_index + num_fringe_cells + 1,
+            left_cut_index + (2 * num_fringe_cells) + 1,
+        )
+        self.lower_left_interp_positions = self.lower_grid.cell_positions[
+            self.lower_left_interp_range[0] : self.lower_left_interp_range[1]
+        ]
+        self.over_left_interp_positions = self.over_grid.cell_positions[
+            0:num_fringe_cells
+        ]
+
+        right_cut_index = self.lower_grid.position_to_cell(self.over_grid.right_pos)
+        self.lower_right_interp_range = (
+            right_cut_index - num_fringe_cells,
+            right_cut_index + 1,
+        )
+        self.lower_right_fringe_range = (
+            right_cut_index - (2 * num_fringe_cells) - 1,
+            right_cut_index - num_fringe_cells - 1,
+        )
+        self.lower_right_interp_positions = self.lower_grid.cell_positions[
+            self.lower_right_interp_range[0] : self.lower_right_interp_range[1]
+        ]
+        self.over_right_interp_positions = self.over_grid.cell_positions[
+            -num_fringe_cells:-1
+        ]
+
+    def __str__(self):
+        return f"Overlap of grid {self.over_grid.index} on lower grid {self.lower_grid.index} with {self.num_fringe_cells} fringe cells"
+
+
+class GridCollection:
+    def __init__(self):
+        self.grids = []
+        self.overlaps = []
+
+    def add_grid(self, new_grid):
+        new_grid.index = len(self.grids)
+
+        for lower_grid in self.grids:
+
+            if lower_grid.does_pos_range_overlap(new_grid.left_pos, new_grid.right_pos):
+                self.overlaps.append(Overlap(lower_grid, new_grid))
+
+        self.grids.append(new_grid)
+
+    def __str__(self):
+        return f"Grid Collection contains {len(self.grids)} grids and {len(self.overlaps)} overlaps"
+
+
+class Grid:
+    def __init__(
+        self,
+        left_pos,
+        right_pos,
+        dx,
+        alpha,
+        left_boundary=Boundary.WALL,
+        right_boundary=Boundary.WALL,
+    ):
+        self.index = None
+        self.left_pos = left_pos
+        self.right_pos = right_pos
+
+        if isinstance(left_boundary, Boundary):
+            self.left_boundary = left_boundary
+        else:
+            raise TypeError(
+                f"left_boundary argument must be a Boundary type, not {type(left_boundary)}"
+            )
+
+        if isinstance(right_boundary, Boundary):
+            self.right_boundary = right_boundary
+        else:
+            raise TypeError(
+                f"right_boundary argument must be a Boundary type, not {type(right_boundary)}"
+            )
+
+        if isinstance(dx, float):
+            self.num_cells = int((self.right_pos - self.left_pos) / dx)
+            self.dx = np.full(self.num_cells, dx, dtype=np.float64)
+        else:
+            self.num_cells = len(dx)
+            self.dx = np.array(dx, dype=np.float64)
+
+        if isinstance(alpha, float) or isinstance(alpha, int):
+            self.alpha = np.full(self.num_cells, alpha, dtype=np.float64)
+        else:
+            self.alpha = np.array(alpha, dype=np.float64)
+
+        self.active = np.ones(self.num_cells)
+        self.cell_positions = self.dx.cumsum() - self.dx / 2 + self.left_pos
+
+    def __str__(self):
+        return f"Grid {self.index}, from {self.left_pos} to {self.right_pos} with {self.num_cells} cells"
+
+    def give_solution(self, solution):
+        self.solution = solution
+        self.energy = np.sum(solution, axis=0) * self.dx
+
+    def set_constant_boundary_values(self, left=None, right=None):
+        if left:
+            if self.left_boundary is Boundary.CONSTANT:
+                self.left_boundary_value = left
+            else:
+                warnings.warn(
+                    f"The left boundary is type {self.left_boundary}, so will not use the set value."
+                )
+
+        if right:
+            if self.right_boundary is Boundary.CONSTANT:
+                self.right_boundary_value = right
+            else:
+                warnings.warn(
+                    f"The right boundary is type {self.right_boundary}, so will not use the set value."
+                )
+
+    def position_to_cell(self, pos):
+        return np.abs(self.cell_positions - pos).argmin()
+
+    def left_right_cell_pos(self):
+        return self.cell_positions[0], self.cell_positions[-1]
+
+    def cut_hole(self, left_cut_pos, right_cut_pos, num_fringe_cells):
+
+        left_cut_index = (
+            self.position_to_cell(left_cut_pos) + (2 * num_fringe_cells) + 1
+        )
+        right_cut_index = (
+            self.position_to_cell(right_cut_pos) - (2 * num_fringe_cells) - 1
+        )
+
+        # If the cut positions don't overlap the grid at all, we don't want to incorrectly cut an end cell
+        if (
+            left_cut_index + right_cut_index > 0
+            and left_cut_index + right_cut_index < (2 * (self.num_cells - 1))
+        ):
+            self.active[left_cut_index : right_cut_index + 1] = 0
+
+        return self
+
+    def does_pos_range_overlap(self, leftmost_pos, rightmost_pos):
+        return leftmost_pos <= self.right_pos and rightmost_pos >= self.left_pos
 
 
 def diffusion_fixed(t, y, alpha, dx):
@@ -350,6 +523,22 @@ if __name__ == "__main__":
     y[40] = 1000
     # alpha = 1
 
+    base = Grid(
+        0,
+        1,
+        args.dx,
+        1,
+        left_boundary=Boundary.PERIODIC,
+        right_boundary=Boundary.PERIODIC,
+    )
+    over = Grid(0.5, 0.6, args.dx / 2, 1)
+
+    grid_collection = GridCollection()
+    grid_collection.add_grid(base)
+    grid_collection.add_grid(over)
+
+    print(grid_collection)
+
     # if args.model == "diff_p_split":
     J = calc_jacobian(num_cells, alpha_array, dx_array)
 
@@ -358,7 +547,7 @@ if __name__ == "__main__":
         Grid = namedtuple(
             "Grid", "left right dx alpha active leftboundary rightboundary"
         )
-        Boundary = namedtuple("Boundary", "type")
+        BoundaryOld = namedtuple("BoundaryOld", "type")
         active_cells = np.ones(num_cells)
         active_cells[75:100] = 0
         main = Grid(
@@ -367,8 +556,8 @@ if __name__ == "__main__":
             dx_array,
             alpha_array,
             active_cells,
-            Boundary("periodic"),
-            Boundary("periodic"),
+            BoundaryOld("periodic"),
+            BoundaryOld("periodic"),
         )
 
         J = calc_jacobian_chimaera(num_cells, [main])
