@@ -4,6 +4,7 @@ import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
+from scipy.interpolate import interp1d
 from matplotlib import style
 from matplotlib import animation
 from collections import namedtuple
@@ -38,35 +39,69 @@ class Overlap:
             self.over_grid.left_pos, self.over_grid.right_pos, num_fringe_cells
         )
 
+        # Lower grid, left side
         left_cut_index = self.lower_grid.position_to_cell(self.over_grid.left_pos)
         self.lower_left_interp_range = (
             left_cut_index,
             left_cut_index + num_fringe_cells + 1,
         )
+        self.lower_left_interp_positions = self.lower_grid.cell_positions[
+            self.lower_left_interp_range[0] : self.lower_left_interp_range[1]
+        ]
         self.lower_left_fringe_range = (
             left_cut_index + num_fringe_cells + 1,
             left_cut_index + (2 * num_fringe_cells) + 1,
         )
-        self.lower_left_interp_positions = self.lower_grid.cell_positions[
-            self.lower_left_interp_range[0] : self.lower_left_interp_range[1]
+        self.lower_left_fringe_positions = self.lower_grid.cell_positions[
+            self.lower_left_fringe_range[0] : self.lower_left_fringe_range[1]
         ]
+
+        # Overlaped grid, left side
+        left_inner_cut_index = self.over_grid.position_to_cell(
+            self.lower_grid.cell_positions[self.lower_left_fringe_range[1] - 1]
+        )
+        self.over_left_interp_range = (
+            left_inner_cut_index - num_fringe_cells,
+            left_inner_cut_index + 1,
+        )
         self.over_left_interp_positions = self.over_grid.cell_positions[
+            self.over_left_interp_range[0] : self.over_left_interp_range[1]
+        ]
+        self.over_left_fringe_range = (0, num_fringe_cells)
+        self.over_left_fringe_positions = self.over_grid.cell_positions[
             0:num_fringe_cells
         ]
 
+        # Lower grid, right side
         right_cut_index = self.lower_grid.position_to_cell(self.over_grid.right_pos)
         self.lower_right_interp_range = (
             right_cut_index - num_fringe_cells,
             right_cut_index + 1,
         )
+        self.lower_right_interp_positions = self.lower_grid.cell_positions[
+            self.lower_right_interp_range[0] : self.lower_right_interp_range[1]
+        ]
         self.lower_right_fringe_range = (
             right_cut_index - (2 * num_fringe_cells) - 1,
             right_cut_index - num_fringe_cells - 1,
         )
-        self.lower_right_interp_positions = self.lower_grid.cell_positions[
-            self.lower_right_interp_range[0] : self.lower_right_interp_range[1]
+        self.lower_right_fringe_positions = self.lower_grid.cell_positions[
+            self.lower_right_fringe_range[0] : self.lower_right_fringe_range[1]
         ]
+
+        # Overlaped grid, right side
+        right_inner_cut_index = self.over_grid.position_to_cell(
+            self.lower_grid.cell_positions[self.lower_right_fringe_range[0]]
+        )
+        self.over_right_interp_range = (
+            right_inner_cut_index,
+            right_inner_cut_index + num_fringe_cells + 1,
+        )
         self.over_right_interp_positions = self.over_grid.cell_positions[
+            self.over_right_interp_range[0] : self.over_right_interp_range[1]
+        ]
+        self.over_right_fringe_range = (-num_fringe_cells, -1)
+        self.over_right_fringe_positions = self.over_grid.cell_positions[
             -num_fringe_cells:-1
         ]
 
@@ -371,6 +406,52 @@ def diffusion_periodic(t, y, alpha, dx):
 def diffusion_chimaera(t, y, grid_collection):
 
     y1 = np.zeros(len(y))
+
+    for ovlp in grid_collection.overlaps:
+
+        # Lower grid, left side
+        interp_func = interp1d(
+            ovlp.lower_left_interp_positions,
+            y[ovlp.lower_left_interp_range[0] : ovlp.lower_left_interp_range[1]],
+        )
+        y[
+            ovlp.over_grid.start
+            + ovlp.over_left_fringe_range[0] : ovlp.over_grid.start
+            + ovlp.over_left_fringe_range[1]
+        ] = interp_func(ovlp.over_left_fringe_positions)
+
+        # Overlaped grid, left side
+        interp_func = interp1d(
+            ovlp.over_left_interp_positions,
+            y[ovlp.over_left_interp_range[0] : ovlp.over_left_interp_range[1]],
+        )
+        y[
+            ovlp.lower_grid.start
+            + ovlp.lower_left_fringe_range[0] : ovlp.lower_grid.start
+            + ovlp.lower_left_fringe_range[1]
+        ] = interp_func(ovlp.lower_left_fringe_positions)
+
+        # Lower grid, right side
+        interp_func = interp1d(
+            ovlp.lower_right_interp_positions,
+            y[ovlp.lower_right_interp_range[0] : ovlp.lower_right_interp_range[1]],
+        )
+        y[
+            ovlp.over_grid.start
+            + ovlp.lower_right_fringe_range[0] : ovlp.over_grid.start
+            + ovlp.lower_right_fringe_range[1]
+        ] = interp_func(ovlp.over_right_fringe_positions)
+
+        # Overlaped grid, right side
+        interp_func = interp1d(
+            ovlp.over_right_interp_positions,
+            y[ovlp.over_right_interp_range[0] : ovlp.over_right_interp_range[1]],
+        )
+        y[
+            ovlp.lower_grid.start
+            + ovlp.lower_right_fringe_range[0] : ovlp.lower_grid.start
+            + ovlp.lower_right_fringe_range[1]
+        ] = interp_func(ovlp.lower_right_fringe_positions)
 
     for grid in grid_collection.grids:
 
