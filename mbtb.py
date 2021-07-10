@@ -179,8 +179,24 @@ class GridCollection:
             # jac=J,
         )
         self.solver_elapsed_time = time.perf_counter() - solver_start_time
+
+        self.total_energy = np.zeros(len(solver.t))
+        for grid in self.grids:
+            grid.give_solution(solver.y[grid.start : grid.end])
+            self.total_energy += grid.energy
+
         self.solver = solver
         self.is_solved = True
+
+    def print_energy_check(self):
+        print(" Grid   Start energy   End energy   Energy difference")
+        for grid in self.grids:
+            print(
+                f"{grid.index:^5}  {grid.energy[0]:10.4f}     {grid.energy[-1]:10.4f}    {grid.energy[-1] - grid.energy[0]:10.4f}"
+            )
+        print(
+            f" Total {self.total_energy[0]:10.4f}     {self.total_energy[-1]:10.4f}    {self.total_energy[-1] - self.total_energy[0]:10.4f}"
+        )
 
     def pos_to_grid(self, pos):
         pass
@@ -282,7 +298,7 @@ class Grid:
 
     def give_solution(self, solution):
         self.solution = solution
-        self.energy = np.sum(solution, axis=0) * self.dx
+        self.energy = np.sum(solution * self.dx[:, np.newaxis], axis=0)
 
     def set_constant_boundary_values(self, left=None, right=None):
         if left:
