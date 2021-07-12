@@ -125,13 +125,13 @@ class GridCollection:
         self.is_ready = False
         self.is_solved = False
 
-    def add_grid(self, new_grid):
+    def add_grid(self, new_grid, num_fringe_cells=1):
         new_grid.index = len(self.grids)
 
         for lower_grid in self.grids:
 
             if lower_grid.does_pos_range_overlap(new_grid.left_pos, new_grid.right_pos):
-                self.overlaps.append(Overlap(lower_grid, new_grid))
+                self.overlaps.append(Overlap(lower_grid, new_grid, num_fringe_cells))
 
         self.grids.append(new_grid)
 
@@ -189,13 +189,13 @@ class GridCollection:
         self.is_solved = True
 
     def print_energy_check(self):
-        print(" Grid   Start energy   End energy   Energy difference")
+        print(f"{'Grid':^20}  Start energy   End energy   Energy difference")
         for grid in self.grids:
             print(
-                f"{grid.index:^5}  {grid.energy[0]:10.4f}     {grid.energy[-1]:10.4f}    {grid.energy[-1] - grid.energy[0]:10.4f}"
+                f"{grid.name:^20}  {grid.energy[0]:10.4f}     {grid.energy[-1]:10.4f}    {grid.energy[-1] - grid.energy[0]:10.4f}"
             )
         print(
-            f" Total {self.total_energy[0]:10.4f}     {self.total_energy[-1]:10.4f}    {self.total_energy[-1] - self.total_energy[0]:10.4f}"
+            f"{'Total':^20}  {self.total_energy[0]:10.4f}     {self.total_energy[-1]:10.4f}    {self.total_energy[-1] - self.total_energy[0]:10.4f}"
         )
 
     def pos_to_grid(self, pos):
@@ -215,43 +215,162 @@ class GridCollection:
     def _gaussian_starting_condition(self):
         pass
 
-    def scatter_plot(self):
+    def scatter_plot(self, time_to_plot, overlap_markers=True):
         if not self.is_solved:
             warnings.warn("The solve method must be run before plotting")
             return
 
-        plt.scatter(
-            self.cell_positions,
-            self.solver.y[:, 10],
-            label=f"$t={self.solver.t[10]:.3e}$",
-            marker="D",
+        fig, axs = plt.subplots(
+            2, 1, sharex="col", gridspec_kw={"height_ratios": [3, 1]}
         )
-        plt.scatter(
-            self.cell_positions,
-            self.solver.y[:, 40],
-            label=f"$t={self.solver.t[40]:.3e}$",
+        time_to_plot_index = np.abs(self.solver.t - time_to_plot).argmin()
+
+        for grid in self.grids:
+            active_bool = grid.active.astype(bool)
+            axs[0].scatter(
+                grid.cell_positions[active_bool],
+                grid.solution[active_bool, time_to_plot_index],
+                label=f"Grid: {grid.name}",
+            )
+
+            axs[1].barh(
+                grid.name,
+                grid.right_pos - grid.left_pos,
+                left=grid.left_pos,
+                height=0.25,
+            )
+
+        if overlap_markers:
+            overlap_marker_colour = "#d3423e"
+            fringe_marker = "s"
+            interp_marker = "^"
+            overlap_marker_size = 10
+            for overlap in self.overlaps:
+                axs[0].scatter(
+                    overlap.lower_left_interp_positions,
+                    overlap.lower_grid.solution[
+                        overlap.lower_left_interp_range[
+                            0
+                        ] : overlap.lower_left_interp_range[1],
+                        time_to_plot_index,
+                    ],
+                    marker=interp_marker,
+                    s=overlap_marker_size,
+                    c=overlap_marker_colour,
+                )
+
+                axs[0].scatter(
+                    overlap.over_left_interp_positions,
+                    overlap.over_grid.solution[
+                        overlap.over_left_interp_range[
+                            0
+                        ] : overlap.over_left_interp_range[1],
+                        time_to_plot_index,
+                    ],
+                    marker=interp_marker,
+                    s=overlap_marker_size,
+                    c=overlap_marker_colour,
+                )
+
+                axs[0].scatter(
+                    overlap.lower_left_fringe_positions,
+                    overlap.lower_grid.solution[
+                        overlap.lower_left_fringe_range[
+                            0
+                        ] : overlap.lower_left_fringe_range[1],
+                        time_to_plot_index,
+                    ],
+                    marker=fringe_marker,
+                    s=overlap_marker_size,
+                    c=overlap_marker_colour,
+                )
+
+                axs[0].scatter(
+                    overlap.over_left_fringe_positions,
+                    overlap.over_grid.solution[
+                        overlap.over_left_fringe_range[
+                            0
+                        ] : overlap.over_left_fringe_range[1],
+                        time_to_plot_index,
+                    ],
+                    marker=fringe_marker,
+                    s=overlap_marker_size,
+                    c=overlap_marker_colour,
+                )
+
+                axs[0].scatter(
+                    overlap.lower_right_interp_positions,
+                    overlap.lower_grid.solution[
+                        overlap.lower_right_interp_range[
+                            0
+                        ] : overlap.lower_right_interp_range[1],
+                        time_to_plot_index,
+                    ],
+                    marker=interp_marker,
+                    s=overlap_marker_size,
+                    c=overlap_marker_colour,
+                )
+
+                axs[0].scatter(
+                    overlap.over_right_interp_positions,
+                    overlap.over_grid.solution[
+                        overlap.over_right_interp_range[
+                            0
+                        ] : overlap.over_right_interp_range[1],
+                        time_to_plot_index,
+                    ],
+                    marker=interp_marker,
+                    s=overlap_marker_size,
+                    c=overlap_marker_colour,
+                )
+
+                axs[0].scatter(
+                    overlap.over_right_fringe_positions,
+                    overlap.over_grid.solution[
+                        overlap.over_right_fringe_range[
+                            0
+                        ] : overlap.over_right_fringe_range[1],
+                        time_to_plot_index,
+                    ],
+                    marker=fringe_marker,
+                    s=overlap_marker_size,
+                    c=overlap_marker_colour,
+                )
+
+                axs[0].scatter(
+                    overlap.lower_right_fringe_positions,
+                    overlap.lower_grid.solution[
+                        overlap.lower_right_fringe_range[
+                            0
+                        ] : overlap.lower_right_fringe_range[1],
+                        time_to_plot_index,
+                    ],
+                    marker=fringe_marker,
+                    s=overlap_marker_size,
+                    c=overlap_marker_colour,
+                )
+
+        axs[0].legend()
+        axs[0].set_xlabel("Position [m]")
+        axs[0].set_ylabel("Temperture [K]")
+        axs[1].set_xlabel("Position [m]")
+        axs[1].set_ylabel("Grid")
+        axs[0].tick_params(reset=True)
+
+        print(
+            f"Showing scatter plot of each grid for time t={self.solver.t[time_to_plot_index]:.3e}s"
         )
-        plt.scatter(
-            self.cell_positions,
-            self.solver.y[:, -1],
-            label=f"$t={self.solver.t[-1]:.3e}$",
-            marker="x",
-        )
-        plt.legend()
-        plt.xlabel("Position")
-        plt.ylabel("Temperture")
+
         plt.show()
 
     def __str__(self):
-        if self.is_solved:
-            return f"Grid Collection of {len(self.grids)} grids and {len(self.overlaps)} overlaps, has been solved"
-        else:
-            return f"Grid Collection of {len(self.grids)} grids and {len(self.overlaps)} overlaps, has not been solved"
+        return f"Grid Collection of {len(self.grids)} grids and {len(self.overlaps)} overlaps, has {'' if self.is_solved else 'not '}been solved"
 
 
 class Grid:
     def __init__(
         self,
+        name,
         left_pos,
         right_pos,
         dx,
@@ -260,6 +379,7 @@ class Grid:
         right_boundary=Boundary.WALL,
     ):
         self.index = None
+        self.name = name
         self.left_pos = left_pos
         self.right_pos = right_pos
 
@@ -672,6 +792,7 @@ if __name__ == "__main__":
 
     if args.model == "diff_chimaera":
         base = Grid(
+            "base",
             0,
             1,
             args.dx,
@@ -680,17 +801,23 @@ if __name__ == "__main__":
             right_boundary=Boundary.PERIODIC,
         )
 
-        over = Grid(0.5, 0.6, args.dx / 2, 1)
+        over = Grid("right overlap", 0.45, 0.6, args.dx / 2, 1)
+        left_over = Grid("left overlap", 0.2, 0.35, args.dx / 4, 1)
 
         grid_collection = GridCollection()
         grid_collection.add_grid(base)
         grid_collection.add_grid(over)
+        grid_collection.add_grid(left_over, num_fringe_cells=1)
         # grid_collection.add_pos_value_starting_condition(0.4, 1000)
         grid_collection.ready()
+        print(grid_collection)
         grid_collection.solve((0, args.time), args.solver)
         print(grid_collection)
-        print(grid_collection.solver)
-        grid_collection.scatter_plot()
+        # print(grid_collection.solver)
+        # grid_collection.scatter_plot()
+        grid_collection.print_energy_check()
+        grid_collection.scatter_plot(0.001)
+        # print(grid_collection.grids[)
 
     else:
         length = 1  # meters
