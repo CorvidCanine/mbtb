@@ -26,7 +26,53 @@ class Boundary(Enum):
 
 
 class Overlap:
-    def __init__(self, lower_grid, over_grid, num_fringe_cells=1):
+    """Class for handling the overlap of grids.
+
+    Attributes`
+    ----------
+    lower_grid : Grid
+        The lower grid
+    over_grid : Grid
+        The grid that is on top of the lower grid
+    num_fringe_cells : int
+        The number of cells to be interpolated from the other grid
+    interface_width : float
+        The width of the interface at the ends of the overlap
+    [lower/over]_[left/right]_interp_range : tuple of ints, shape (2)
+        The range of cells to be used for interpolation to the other
+        grid. Indexs are for within each grid, not the chimaera grid.
+    [lower/over]_[left/right]_interp_positions : tuple of floats, shape (2)
+        The range of positions of the cells to be used for interpolation
+        to the other grid.
+    [lower/over]_[left/right]_fringe_range : tuple of ints, shape (2)
+        The range of cells to be interpolated too. Index are for
+        within each grid.
+    [lower/over]_[left/right]_fringe_positions : tuple of floats, shape (2)
+        The range of positions of the cells to be interpolated too.
+    """
+
+    def __init__(self, lower_grid, over_grid, interface_width=0.03, num_fringe_cells=1):
+        """Initialisation method for the Overlap class.
+
+        Parameters
+        ----------
+        lower_grid : Grid
+            The lower grid.
+        over_grid : Grid
+            The grid of top of the lower grid.
+        interface_width : float, optional
+            The width of the interface at the ends of the overlap
+            region, by default 0.03
+        num_fringe_cells : int, optional
+            The number of cells to be interpolated to from the
+            other grid, by default 1
+
+        Raises
+        ------
+        ValueError
+            If num_fringe_cells is less than 1
+        """
+
         self.lower_grid = lower_grid
         self.over_grid = over_grid
 
@@ -34,7 +80,7 @@ class Overlap:
             raise ValueError("The number of overlap cells must be at least 1")
 
         self.num_fringe_cells = num_fringe_cells
-        self.interface_width = 0.01 * 3
+        self.interface_width = interface_width
 
         left_cut_in_lower_index, right_cut_in_lower_index = self.lower_grid.cut_hole(
             self.over_grid.left_pos, self.over_grid.right_pos, self.interface_width
@@ -117,29 +163,96 @@ class Overlap:
         return f"Overlap of grid {self.over_grid.index} on lower grid {self.lower_grid.index} with {self.num_fringe_cells} fringe cells"
 
 
-class GridCollection:
+class ChimaeraGrid:
+    """
+    A class for working with chimaera/multiblock grids.
+
+    This class holds the multiple 1d grids (stored as Grid objects)
+    that make up a chimaera grid and the Overlap objects that describe
+    how those grids are interfaced to each other. It also calculates any
+    needed infomation for the solver, and handles the running of the solver,
+    which is scipy's solve_ivp function.
+
+    Attributes
+    ----------
+    grids : list of Grid
+        The grids that makeup this chimaera grid
+    overlaps : list of Overlap
+        The overlaps of the grids
+    is_ready : bool
+        Flag that is True after `ready` has been called
+    is_solved : bool
+        Flag that is `True` after `solve` has been called
+    total_num_cells : int
+        The number of cells in all of the grids,
+        is only set after calling `ready`
+    result : OdeResult
+        The solution found by solve_ivp
+    solver_elapsed_time: float
+        The time the solver took, set after
+        calling `solve`
+    total_energy : float
+        The total energy of all grids for each solved time step
+    """
+
     def __init__(self):
+        """Initialisation method for ChimaeraGrid
+
+        Has no parameters.
+        """
+
         self.grids = []
         self.overlaps = []
         self.starting_conditions = []
+        self.cell_positions = np.array([])
+        self.total_num_cells = 0
+        self.result = None
+        self.solver_elapsed_time = None
+
         self.is_ready = False
         self.is_solved = False
 
     def add_grid(self, new_grid, num_fringe_cells=1):
+        """Registers a new grid with the ChimaeraGrid
+
+        An Overlap will be created if any grids are below this new
+        one. New grids are placed on top of previous grids.
+
+        Parameters
+        ----------
+        new_grid : Grid
+            The grid to be registered
+        num_fringe_cells : int, optional
+            The number of cells at the edge of overlaps to be
+            interpolated to, by default 1
+        """
+
         new_grid.index = len(self.grids)
 
         for lower_grid in self.grids:
-
             if lower_grid.does_pos_range_overlap(new_grid.left_pos, new_grid.right_pos):
+                # If there is a grid underneath the new grid, create a Overlap
                 self.overlaps.append(Overlap(lower_grid, new_grid, num_fringe_cells))
 
         self.grids.append(new_grid)
 
     def ready(self):
+        """Readies the ChimaeraGrid to be solved, should be called before `solve`.
+
+        Calculates the positions of cells in each grid within
+        the overall space and the total number of cells in the collection.
+        Sets the starting conditions - TODO
+
+        Raises
+        ------
+        Exception
+            If no grids are registered when calling this function an
+            exception is raised
+        """
+
         counter = 0
-        self.cell_positions = np.array([])
         if len(self.grids) == 0:
-            raise Exception("At least one grid needs to be added before readying")
+            raise Exception("At least one grid needs to be registerd before readying")
 
         for grid in self.grids:
             grid.set_grid_start(counter)
@@ -162,6 +275,26 @@ class GridCollection:
         self.is_ready = True
 
     def solve(self, solver_time_span, solver_method):
+        """Solve the grid collection using scipy's solve_ivp.
+
+        Will solve the grid collection for the specified time span.
+        The solution will be stored in self.solver.
+        The total energy is calculated and stored in self.total_energy.
+        The `ready` method needs to be called before this function.
+
+        Parameters
+        ----------
+        solver_time_span : 2-tuple of floats
+            Interval of integration (t0, tf), for solve_ivp.
+        solver_method : string or OdeSolver
+            Integration method for solve_ivp to use.
+
+        Raises
+        ------
+        Exception
+            If the method `ready` hasn't been run an exception will be raised
+        """
+
         if not self.is_ready:
             raise Exception("The ready method must be run before solving")
 
@@ -185,18 +318,24 @@ class GridCollection:
             grid.give_solution(solver.y[grid.start : grid.end])
             self.total_energy += grid.energy
 
-        self.solver = solver
+        print(f"Ran for {self.solver_elapsed_time:6.1f}s. {solver.message}")
+
+        self.result = solver
         self.is_solved = True
 
     def print_energy_check(self):
-        print(f"{'Grid':^20}  Start energy   End energy   Energy difference")
-        for grid in self.grids:
+        """Print the energy difference for each grid and the total to terminal"""
+        if self.is_solved:
+            print(f"{'Grid':^20}  Start energy   End energy   Energy difference")
+            for grid in self.grids:
+                print(
+                    f"{grid.name:^20}  {grid.energy[0]:10.4f}     {grid.energy[-1]:10.4f}    {grid.energy[-1] - grid.energy[0]:10.4f}"
+                )
             print(
-                f"{grid.name:^20}  {grid.energy[0]:10.4f}     {grid.energy[-1]:10.4f}    {grid.energy[-1] - grid.energy[0]:10.4f}"
+                f"{'Total':^20}  {self.total_energy[0]:10.4f}     {self.total_energy[-1]:10.4f}    {self.total_energy[-1] - self.total_energy[0]:10.4f}"
             )
-        print(
-            f"{'Total':^20}  {self.total_energy[0]:10.4f}     {self.total_energy[-1]:10.4f}    {self.total_energy[-1] - self.total_energy[0]:10.4f}"
-        )
+        else:
+            print("This grid collection has not been solved yet")
 
     def pos_to_grid(self, pos):
         pass
@@ -223,7 +362,9 @@ class GridCollection:
         fig, axs = plt.subplots(
             2, 1, sharex="col", gridspec_kw={"height_ratios": [3, 1]}
         )
-        time_to_plot_index = np.abs(self.solver.t - time_to_plot).argmin()
+        # The solver produces output at times it fixes is sutible,
+        # so we need to find the closest time with output to the requested time
+        time_to_plot_index = np.abs(self.result.t - time_to_plot).argmin()
 
         for grid in self.grids:
             active_bool = grid.active.astype(bool)
@@ -358,7 +499,7 @@ class GridCollection:
         axs[0].tick_params(reset=True)
 
         print(
-            f"Showing scatter plot of each grid for time t={self.solver.t[time_to_plot_index]:.3e}s"
+            f"Showing scatter plot of each grid for time t={self.result.t[time_to_plot_index]:.3e}s"
         )
 
         plt.show()
@@ -368,21 +509,112 @@ class GridCollection:
 
 
 class Grid:
+    """A class for representing a 1d quadrilateral grid.
+
+    Attributes
+    ----------
+    name : str
+        The human readable name of this grid
+    index : int
+        The index of this grid within a ChimearaGrid.
+        Is `None` if not a part of a larger grid.
+    left_pos : float
+        The left most position (Left edge of the first cell) of this grid
+    right_pos: float
+        The right most position (Right edge of the last cell) of this grid
+    num_cells : int
+        The total number of cells in this grid. Includes inactive and boundary
+        cells.
+    dx : ndarray, shape (num_cells)
+        The cell width for every cell
+    alpha : ndarray, shape (num_cells)
+        The constant, alpha, for every cell
+    cell_positions : ndarray, shape(num_cells)
+        The position of the cell centre/node of every cell
+    active : ndarray, shape(num_cells)
+        An array specifying which cells will be updated by
+        the solver (cells set to 1) and which will not be
+        updated (cells set to 0)
+    left_boundary : Boundary
+        The type of the left boundary
+    right_boundary : Boundary
+        The type of the right boundary
+    solution : ndarray, shape (num_cells, number of time points)
+        2D array of the solved grid
+        Set by `give_solution`.
+    energy : ndarray, shape(number of time points)
+        The total energy of the grid at each solved time point,
+        calculated when `give_solution` is called
+    jacobian : ndarray, shape(num_cells, num_cells)
+        The jacobian for this grid
+    left_boundary_value : Boundary
+        The type of the left boundary
+    right_boundary_value : Boundary
+        The type of the right boundary
+    start : int
+        The left most index of this grid in the chimaera array
+    end : int
+        The right most index of this grid in the chimaera array
+    """
+
     def __init__(
         self,
         name,
         left_pos,
         right_pos,
         dx,
-        alpha,
+        alpha=1,
         left_boundary=Boundary.WALL,
         right_boundary=Boundary.WALL,
     ):
-        self.index = None
+        """Initialisation method for Grid.
+
+        Calculates the number of cells in the grid from the arguments.
+        Initialises the active array to all cells as active.
+        Calculates the cell position of every cell within the domain.
+        Calls the method to calculate the grids jacobian.
+
+        Parameters
+        ----------
+        name : str
+            The human readable name for this grid
+        left_pos : float
+            The left most position of this grid
+            (Left edge of the first cell)
+        right_pos : float
+            The right most position of this grid
+            (Right edge of the last cell)
+        dx : float or array_like, shape (num_cells)
+            Either a float for a uniform cell width or
+            an array of the cell width for each cell. In the
+            later case `num_cells` is set to the length of the
+            passed array.
+        alpha : float or array_like, shape (num_cells), optional
+            Either a float for a uniform alpha constant or
+            an array of the alpha value for each cell. In the
+            later case the length of the passed array must match.
+            The default is a uniform value of 1.
+        left_boundary : Boundary, optional
+            The type of the left boundary, by default Boundary.WALL
+        right_boundary : Boundary, optional
+            The type of the right boundary, by default Boundary.WALL
+
+        Raises
+        ------
+        TypeError
+            If a type other than a Boundary is passed to left_boundary
+            or right_boundary a TypeError will be thrown.
+        """
         self.name = name
         self.left_pos = left_pos
         self.right_pos = right_pos
+        self.index = None
+        self.solution = None
+        self.start = self.end = None
+        self.energy = None
 
+        # Check that left_boundary and right_boundary are from the Boundary enum
+        # to avoid confusing errors later if they are not
         if isinstance(left_boundary, Boundary):
             self.left_boundary = left_boundary
         else:
@@ -397,30 +629,58 @@ class Grid:
                 f"right_boundary argument must be a Boundary type, not {type(right_boundary)}"
             )
 
+        # I could use overloading instead of type checking, but this works for allowing
+        # dx or alpha to both be either a float or an array
         if isinstance(dx, float):
             self.num_cells = int((self.right_pos - self.left_pos) / dx)
             self.dx = np.full(self.num_cells, dx, dtype=np.float64)
         else:
             self.num_cells = len(dx)
-            self.dx = np.array(dx, dype=np.float64)
+            self.dx = np.array(dx, dtype=np.float64)
 
         if isinstance(alpha, float) or isinstance(alpha, int):
             self.alpha = np.full(self.num_cells, alpha, dtype=np.float64)
         else:
-            self.alpha = np.array(alpha, dype=np.float64)
+            if len(alpha) != self.num_cells:
+                raise ValueError(
+                    "The length of the alpha array must match the number of cells in the grid."
+                    + f" The passed array had length {len(alpha)}, the number of cells is {self.num_cells}."
+                )
+            self.alpha = np.array(alpha, dtype=np.float64)
 
         self.active = np.ones(self.num_cells)
         self.cell_positions = self.dx.cumsum() - self.dx / 2 + self.left_pos
-        self.calc_jacobian()
+        self._calc_jacobian()
 
     def __str__(self):
         return f"Grid {self.index}, from {self.left_pos} to {self.right_pos} with {self.num_cells} cells"
 
     def give_solution(self, solution):
+        """Pass the solved grid to the grid object.
+
+        Parameters
+        ----------
+        solution : ndarray, shape (num_cells, number of time points)
+            Should be a 2d array of every cell in the grid at each solved time point.
+            This is every cell in this grid object, not the entire domain.
+        """
+
         self.solution = solution
         self.energy = np.sum(solution * self.dx[:, np.newaxis], axis=0)
 
     def set_constant_boundary_values(self, left=None, right=None):
+        """If this grid has a constant boundary, the value of it can be specified
+
+        A warning will be raised if a value is set for a non-constant boundary.
+
+        Parameters
+        ----------
+        left : float, optional
+            The value for the left hand boundary to be held at, by default None
+        right : float, optional
+            The value for the right hand boundary to be held at, by default None
+        """
+
         if left:
             if self.left_boundary is Boundary.CONSTANT:
                 self.left_boundary_value = left
@@ -438,16 +698,70 @@ class Grid:
                 )
 
     def set_grid_start(self, start):
+        """Set the index of the start of this grid within the overall y array.
+
+        This tells the grid where in the full domain y array, that's passed to the
+        solver, it begins. The end is assumed to be at plus the number of cells in
+        the grid.
+
+        Parameters
+        ----------
+        start : int
+            The left most index of this grid in the domain array
+        """
+
         self.start = start
         self.end = start + self.num_cells
 
     def position_to_cell(self, pos):
+        """Converts a position in the domain to a cell index
+
+        The index returned is the closest one to the given position
+        and is for a cell within this grid object, not in the domain array.
+
+        Parameters
+        ----------
+        pos : float
+            The position to be converted
+
+        Returns
+        -------
+        int
+            The index of the cell closest to `pos`
+        """
+
         return np.abs(self.cell_positions - pos).argmin()
 
     def left_right_cell_pos(self):
+        """Gets the position of the left most and right most cell
+
+        Returns
+        -------
+        2-tuple of floats
+            Tuple of the left position and the right position
+        """
+
         return self.cell_positions[0], self.cell_positions[-1]
 
     def cut_hole(self, left_cut_pos, right_cut_pos, interface_width):
+        """Sets a range of the grid to inactive.
+
+        Parameters
+        ----------
+        left_cut_pos : float
+            The begining of the cut
+        right_cut_pos : float
+            The end of the cut
+        interface_width : float
+            The width of the region at the ends of the cut
+            used for overlap interfacing.
+
+        Returns
+        -------
+        2-tuple of ints
+            The left and right index of the cut within this grid
+        """
+
         left_cut_index = self.position_to_cell(left_cut_pos + interface_width)
         right_cut_index = self.position_to_cell(right_cut_pos - interface_width) + 1
 
@@ -456,9 +770,35 @@ class Grid:
         return left_cut_index, right_cut_index
 
     def does_pos_range_overlap(self, leftmost_pos, rightmost_pos):
+        """Checks if a position range overlaps with this grid.
+
+        The range is checked against the defining range for this grid,
+        which is the left edge of the first cell and the right edge of the last
+        cell. The first cell centre/node will be half a cell width away.
+
+        Parameters
+        ----------
+        leftmost_pos : float
+            The left position of the range to check
+        rightmost_pos : float
+            The right position of the range to check
+
+        Returns
+        -------
+        bool
+            `True` if the range overlaps this grid,
+            `False` if it does not overlap this grid.
+        """
+
         return leftmost_pos <= self.right_pos and rightmost_pos >= self.left_pos
 
-    def calc_jacobian(self):
+    def _calc_jacobian(self):
+        """Internal method to calculate the grids jacobian matrix.
+
+        This method is called by the grids initialisation method,
+        it does not return the jacobian but stores it in `self.jacobian`.
+        """
+
         jec = np.zeros((self.num_cells, self.num_cells))
 
         for i in range(1, self.num_cells - 1):
@@ -537,11 +877,28 @@ def diffusion_periodic(t, y, alpha, dx):
     return y1
 
 
-def diffusion_chimaera(t, y, grid_collection):
+def diffusion_chimaera(t, y, chimaera_grid):
+    """
+    Calculates a single step of diffusion on a 1d chimaera grid.
+
+    Parameters
+    ----------
+    t : float
+        The time of this step, unused by required by solve_ivp
+    y : ndarray, shape(num_cells)
+        Array of all cells in the chimaera grid
+    chimaera_grid : ChimaeraGrid
+        The description of the grid
+
+    Returns
+    -------
+    ndarray, shape(num_cells)
+        The y grid differentiated by one step
+    """
 
     y1 = np.zeros(len(y))
 
-    for ovlp in grid_collection.overlaps:
+    for ovlp in chimaera_grid.overlaps:
 
         # Lower grid interpolate to overlap grid, left side
         interp_func = interp1d(
@@ -603,7 +960,7 @@ def diffusion_chimaera(t, y, grid_collection):
             + ovlp.lower_right_fringe_range[1]
         ] = interp_func(ovlp.lower_right_fringe_positions)
 
-    for grid in grid_collection.grids:
+    for grid in chimaera_grid.grids:
 
         left_alpha = (grid.alpha[1:] + grid.alpha[:-1]) / 2
         left_J = (
@@ -796,15 +1153,15 @@ if __name__ == "__main__":
             0,
             1,
             args.dx,
-            1,
+            alpha=1,
             left_boundary=Boundary.PERIODIC,
             right_boundary=Boundary.PERIODIC,
         )
 
-        over = Grid("right overlap", 0.45, 0.6, args.dx / 2, 1)
-        left_over = Grid("left overlap", 0.2, 0.35, args.dx / 4, 1)
+        over = Grid("right overlap", 0.45, 0.6, args.dx / 2)
+        left_over = Grid("left overlap", 0.2, 0.35, args.dx / 4)
 
-        grid_collection = GridCollection()
+        grid_collection = ChimaeraGrid()
         grid_collection.add_grid(base)
         grid_collection.add_grid(over)
         grid_collection.add_grid(left_over, num_fringe_cells=1)
