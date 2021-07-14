@@ -1,6 +1,7 @@
 import time
 import argparse
 import warnings
+import json
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
@@ -10,6 +11,7 @@ from matplotlib import animation
 from collections import namedtuple
 from enum import Enum, auto
 from functools import partial
+from pathlib import Path
 
 try:
     # Load custom matplotlib style if it's avalible
@@ -212,7 +214,7 @@ class ChimaeraGrid:
         self.is_ready = False
         self.is_solved = False
 
-    def add_grid(self, new_grid, num_fringe_cells=1):
+    def add_grid(self, new_grid, interface_width=0.03, num_fringe_cells=1):
         """Registers a new grid with the ChimaeraGrid
 
         An Overlap will be created if any grids are below this new
@@ -232,7 +234,14 @@ class ChimaeraGrid:
         for lower_grid in self.grids:
             if lower_grid.does_pos_range_overlap(new_grid.left_pos, new_grid.right_pos):
                 # If there is a grid underneath the new grid, create a Overlap
-                self.overlaps.append(Overlap(lower_grid, new_grid, num_fringe_cells))
+                self.overlaps.append(
+                    Overlap(
+                        lower_grid,
+                        new_grid,
+                        interface_width=interface_width,
+                        num_fringe_cells=num_fringe_cells,
+                    )
+                )
 
         self.grids.append(new_grid)
 
@@ -325,6 +334,7 @@ class ChimaeraGrid:
 
     def print_energy_check(self):
         """Print the energy difference for each grid and the total to terminal"""
+
         if self.is_solved:
             print(f"{'Grid':^20}  Start energy   End energy   Energy difference")
             for grid in self.grids:
@@ -605,6 +615,7 @@ class Grid:
             If a type other than a Boundary is passed to left_boundary
             or right_boundary a TypeError will be thrown.
         """
+
         self.name = name
         self.left_pos = left_pos
         self.right_pos = right_pos
@@ -1145,36 +1156,70 @@ if __name__ == "__main__":
         help="The solver method solve_ivp should use. Default is RK45.",
         default="RK45",
     )
+    parser.add_argument(
+        "--file",
+        help="Path to a file.",
+        type=Path,
+    )
     args = parser.parse_args()
 
     if args.model == "diff_chimaera":
-        base = Grid(
-            "base",
-            0,
-            1,
-            args.dx,
-            alpha=1,
-            left_boundary=Boundary.PERIODIC,
-            right_boundary=Boundary.PERIODIC,
-        )
+        if args.file:
+            with args.file.open(mode="r") as grid_descrip_file:
+                chimaera_grid_descrip = json.load(grid_descrip_file)
+            grid_collection = ChimaeraGrid()
+            for grid in chimaera_grid_descrip["grids"]:
+                new_grid = Grid(
+                    grid["name"],
+                    grid["left_pos"],
+                    grid["right_pos"],
+                    grid["dx"],
+                    grid["alpha"],
+                    left_boundary=Boundary[grid["left_boundary"]],
+                    right_boundary=Boundary[grid["right_boundary"]],
+                )
+                grid_collection.add_grid(
+                    new_grid,
+                    interface_width=grid["interface_width"],
+                    num_fringe_cells=grid["num_fringe_cells"],
+                )
+            grid_collection.ready()
+            print(grid_collection)
+            grid_collection.solve(
+                chimaera_grid_descrip["time_span"], chimaera_grid_descrip["solver"]
+            )
+            if args.scatter:
+                grid_collection.scatter_plot(0.001)
 
-        over = Grid("right overlap", 0.45, 0.6, args.dx / 2)
-        left_over = Grid("left overlap", 0.2, 0.35, args.dx / 4)
+        else:
+            base = Grid(
+                "base",
+                0,
+                1,
+                args.dx,
+                alpha=1,
+                left_boundary=Boundary.PERIODIC,
+                right_boundary=Boundary.PERIODIC,
+            )
 
-        grid_collection = ChimaeraGrid()
-        grid_collection.add_grid(base)
-        grid_collection.add_grid(over)
-        grid_collection.add_grid(left_over, num_fringe_cells=1)
-        # grid_collection.add_pos_value_starting_condition(0.4, 1000)
-        grid_collection.ready()
-        print(grid_collection)
-        grid_collection.solve((0, args.time), args.solver)
-        print(grid_collection)
-        # print(grid_collection.solver)
-        # grid_collection.scatter_plot()
-        grid_collection.print_energy_check()
-        grid_collection.scatter_plot(0.001)
-        # print(grid_collection.grids[)
+            over = Grid("right overlap", 0.45, 0.6, args.dx / 2)
+            left_over = Grid("left overlap", 0.2, 0.35, args.dx / 4)
+
+            grid_collection = ChimaeraGrid()
+            grid_collection.add_grid(base)
+            grid_collection.add_grid(over)
+            grid_collection.add_grid(left_over, num_fringe_cells=1)
+            # grid_collection.add_pos_value_starting_condition(0.4, 1000)
+            grid_collection.ready()
+            print(grid_collection)
+            grid_collection.solve((0, args.time), args.solver)
+            print(grid_collection)
+            # print(grid_collection.solver)
+            # grid_collection.scatter_plot()
+            grid_collection.print_energy_check()
+            if args.scatter:
+                grid_collection.scatter_plot(0.001)
+            # print(grid_collection.grids[)
 
     else:
         length = 1  # meters
