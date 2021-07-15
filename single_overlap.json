@@ -4,6 +4,13 @@
         2000
     ],
     "solver": "Radau",
+    "starting_condition": {
+        "type": "gaussian",
+        "height": 1000,
+        "centre": 0.5,
+        "width": 0.05,
+        "base": 0
+    },
     "grids": [
         {
             "name": "base",
@@ -17,7 +24,7 @@
             "num_fringe_cells": null
         },
         {
-            "name": "right overlap",
+            "name": "overlap",
             "left_pos": 0.45,
             "right_pos": 0.6,
             "dx": 0.005,
@@ -25,7 +32,7 @@
             "left_boundary": "WALL",
             "right_boundary": "WALL",
             "interface_width": 0.03,
-            "num_fringe_cells": 2
+            "num_fringe_cells": 1
         }
     ]
 }

@@ -207,6 +207,7 @@ class ChimaeraGrid:
         self.overlaps = []
         self.starting_conditions = []
         self.cell_positions = np.array([])
+        self.active_y = np.array([])
         self.total_num_cells = 0
         self.result = None
         self.solver_elapsed_time = None
@@ -245,12 +246,26 @@ class ChimaeraGrid:
 
         self.grids.append(new_grid)
 
-    def ready(self):
+    def ready(self, starting_condition=None):
         """Readies the ChimaeraGrid to be solved, should be called before `solve`.
 
         Calculates the positions of cells in each grid within
         the overall space and the total number of cells in the collection.
-        Sets the starting conditions - TODO
+        Sets the starting conditions.
+
+        The starting conditions dictionary should have a 'type' field that selectes
+        the type of starting condition to run. This can be 'gaussian' or 'preset'.
+
+        If 'gaussian', the parameters for the gaussian must be in the dict.
+        If 'preset', 'starting_array' should be an array of floats of length num_cells
+        that is a precalculated starting condition.
+
+        Parameters
+        ----------
+        starting_condition : dict
+            A dictionary specifying the starting conditions.
+            If `None`, cell 40 will be set to 1000, this is the
+            default.
 
         Raises
         ------
@@ -259,26 +274,40 @@ class ChimaeraGrid:
             exception is raised
         """
 
-        counter = 0
         if len(self.grids) == 0:
             raise Exception("At least one grid needs to be registerd before readying")
 
+        counter = 0
         for grid in self.grids:
             grid.set_grid_start(counter)
             counter += grid.num_cells
             self.cell_positions = np.concatenate(
                 (self.cell_positions, grid.cell_positions)
             )
+            self.active_y = np.concatenate((self.active_y, grid.active))
 
         self.total_num_cells = counter
 
+        # Convert from an array of 1s and 0s to bools
+        self.active_y = self.active_y.astype("bool")
         starting_y = np.zeros(self.total_num_cells)
 
-        # for condition in self.starting_conditions:
-        #     condition()
-
-        # TEMP
-        starting_y[40] = 1000
+        if starting_condition is None:
+            starting_y[40] = 1000
+        elif starting_condition["type"] == "gaussian":
+            starting_y[self.active_y] = gaussian_start(
+                self.cell_positions[self.active_y],
+                starting_condition["height"],
+                starting_condition["centre"],
+                starting_condition["width"],
+                starting_condition["base"],
+            )
+        elif starting_condition["type"] == "preset":
+            starting_y[self.active_y] = starting_condition["starting_array"]
+        else:
+            raise ValueError(
+                f"Unknown starting condition type, {starting_condition.type}."
+            )
 
         self.starting_y = starting_y
         self.is_ready = True
@@ -346,23 +375,6 @@ class ChimaeraGrid:
             )
         else:
             print("This grid collection has not been solved yet")
-
-    def pos_to_grid(self, pos):
-        pass
-
-    def add_pos_value_starting_condition(self, pos, value):
-        self.starting_conditions.append(
-            partial(self._pos_value_starting_condition, pos, value)
-        )
-
-    def _pos_value_starting_condition(self, pos, value):
-        pass
-
-    def add_gaussian_starting_condition(self):
-        pass
-
-    def _gaussian_starting_condition(self):
-        pass
 
     def scatter_plot(self, time_to_plot, overlap_markers=True):
         if not self.is_solved:
@@ -851,6 +863,34 @@ class Grid:
         self.jacobian = jec
 
 
+def gaussian_start(positions, height, centre, width, base):
+    """Creates a guassian starting condition.
+
+    Parameters
+    ----------
+    positions : ndarray, shape(num_cells)
+        The position of the cell centre/node of every cell
+    height : float
+        a, The maximum value of the gaussian.
+        This is in kelvin if solving the diffusion equ.
+    centre : float
+        b or x0, the position the gaussian will
+        be centred on.
+    width : float
+        c or σ, is related to how wide the
+        gaussian is.
+    base : float
+        A base constant that the gaussian sits upon
+
+    Returns
+    -------
+    ndarray, shape(num_cells)
+        A starting array of values
+    """
+
+    return base + height * np.exp(-((positions - centre) ** 2) / (2 * width * width))
+
+
 def diffusion_fixed(t, y, alpha, dx):
 
     y1 = np.zeros(len(y))
@@ -1183,7 +1223,9 @@ if __name__ == "__main__":
                     interface_width=grid["interface_width"],
                     num_fringe_cells=grid["num_fringe_cells"],
                 )
-            grid_collection.ready()
+            grid_collection.ready(
+                starting_condition=chimaera_grid_descrip["starting_condition"]
+            )
             print(grid_collection)
             grid_collection.solve(
                 chimaera_grid_descrip["time_span"], chimaera_grid_descrip["solver"]
