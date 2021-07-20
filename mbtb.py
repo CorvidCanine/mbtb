@@ -1,7 +1,7 @@
 import time
 import argparse
 import warnings
-import json
+import toml
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
@@ -1198,7 +1198,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--file",
-        help="Path to a file.",
+        help="Path to a grid description toml file, used by diff_chimaera model.",
         type=Path,
     )
     args = parser.parse_args()
@@ -1206,11 +1206,12 @@ if __name__ == "__main__":
     if args.model == "diff_chimaera":
         if args.file:
             with args.file.open(mode="r") as grid_descrip_file:
-                chimaera_grid_descrip = json.load(grid_descrip_file)
+                chimaera_grid_descrip = toml.load(grid_descrip_file)
+
             grid_collection = ChimaeraGrid()
-            for grid in chimaera_grid_descrip["grids"]:
+            for grid_name, grid in chimaera_grid_descrip["grids"].items():
                 new_grid = Grid(
-                    grid["name"],
+                    grid_name,
                     grid["left_pos"],
                     grid["right_pos"],
                     grid["dx"],
