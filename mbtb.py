@@ -1,17 +1,16 @@
 import time
-import argparse
 import warnings
-import toml
+import json
+import subprocess
+import platform
+import hdf5storage
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
 from scipy.interpolate import interp1d
 from matplotlib import style
-from matplotlib import animation
-from collections import namedtuple
 from enum import Enum, auto
-from functools import partial
-from pathlib import Path
+from datetime import datetime
 
 try:
     # Load custom matplotlib style if it's avalible
@@ -25,6 +24,12 @@ class Boundary(Enum):
     WALL = auto()
     # IGNORE = auto()
     CONSTANT = auto()
+
+
+class OverlapError(Exception):
+    """Exception raised when an overlap can not be created"""
+
+    pass
 
 
 class Overlap:
@@ -71,15 +76,17 @@ class Overlap:
 
         Raises
         ------
-        ValueError
-            If num_fringe_cells is less than 1
+        OverlapError
+            If num_fringe_cells is less than 1 or the interface width is
+            too short for the cell widths to create an overlap an exception
+            is raised
         """
-
+        self.failed_to_create = False
         self.lower_grid = lower_grid
         self.over_grid = over_grid
 
         if num_fringe_cells < 1:
-            raise ValueError("The number of overlap cells must be at least 1")
+            raise OverlapError("The number of overlap cells must be at least 1")
 
         self.num_fringe_cells = num_fringe_cells
         self.interface_width = interface_width
@@ -123,6 +130,16 @@ class Overlap:
             0:num_fringe_cells
         ]
 
+        if (
+            len(self.lower_left_interp_positions) < 2
+            or self.over_left_fringe_positions > self.lower_left_interp_positions[-1]
+        ):
+            self.failed_to_create = True
+            raise OverlapError(
+                f"Unable to create overlap for '{self.over_grid.name}' on '{self.lower_grid.name}',"
+                + " insufficient interface width on left side"
+            )
+
         # Lower grid, right side
         right_pos_in_lower_index = self.lower_grid.position_to_cell(
             self.over_grid.right_pos
@@ -161,8 +178,44 @@ class Overlap:
             self.over_right_fringe_range[0] : self.over_right_fringe_range[1]
         ]
 
+        if (
+            len(self.lower_right_interp_positions) < 2
+            or self.over_right_fringe_positions < self.lower_right_interp_positions[0]
+        ):
+            self.failed_to_create = True
+            raise OverlapError(
+                f"Unable to create overlap for '{self.over_grid.name}' on '{self.lower_grid.name}',"
+                + " insufficient interface width on right side"
+            )
+
     def __str__(self):
         return f"Overlap of grid {self.over_grid.index} on lower grid {self.lower_grid.index} with {self.num_fringe_cells} fringe cells"
+
+    def to_dict(self):
+        """Returns a dictionary containing all the important attributes in the object
+
+        Returns
+        -------
+        dict
+            The dict containing all attributes
+        """
+        overlap_dict = {}
+        # Save the indexes to the grids, not copies of them
+        overlap_dict["lower_grid_index"] = self.lower_grid.index
+        overlap_dict["over_grid_index"] = self.over_grid.index
+        overlap_dict["failed_to_create"] = self.failed_to_create
+        overlap_dict["num_fringe_cells"] = self.num_fringe_cells
+        overlap_dict["interface_width"] = self.interface_width
+        overlap_dict["lower_left_interp_range"] = self.lower_left_interp_range
+        overlap_dict["lower_left_interp_positions"] = self.lower_left_interp_positions
+        overlap_dict["lower_right_interp_range"] = self.lower_right_interp_range
+        overlap_dict["lower_right_interp_positions"] = self.lower_right_interp_positions
+        overlap_dict["over_left_interp_range"] = self.over_left_interp_range
+        overlap_dict["over_left_interp_positions"] = self.over_left_interp_positions
+        overlap_dict["over_right_interp_range"] = self.over_right_interp_range
+        overlap_dict["over_right_interp_positions"] = self.over_right_interp_positions
+
+        return overlap_dict
 
 
 class ChimaeraGrid:
@@ -195,22 +248,36 @@ class ChimaeraGrid:
         calling `solve`
     total_energy : float
         The total energy of all grids for each solved time step
+    name : str
+        A name for this Chimaera grid
+    description : str
+        A short description of this Chimaera grid
     """
 
-    def __init__(self):
+    def __init__(self, name=None, description=None):
         """Initialisation method for ChimaeraGrid
 
-        Has no parameters.
+        Parameters
+        ----------
+        name : str, optional
+            A name for this chimaera grid, by default None
+        description : str, optional
+            A short description for this chimaera grid, by default None
         """
 
+        self.name = name
+        self.description = description
         self.grids = []
         self.overlaps = []
-        self.starting_conditions = []
+        self.starting_condition = None
         self.cell_positions = np.array([])
         self.active_y = np.array([])
         self.total_num_cells = 0
         self.result = None
         self.solver_elapsed_time = None
+        self.solver_time_span = None
+        self.solver_method = None
+        self.total_energy = None
 
         self.is_ready = False
         self.is_solved = False
@@ -225,6 +292,9 @@ class ChimaeraGrid:
         ----------
         new_grid : Grid
             The grid to be registered
+        interface_width : float
+            The width of the interface region, will be passed to
+            a new Overlap object.
         num_fringe_cells : int, optional
             The number of cells at the edge of overlaps to be
             interpolated to, by default 1
@@ -294,6 +364,7 @@ class ChimaeraGrid:
 
         if starting_condition is None:
             starting_y[40] = 1000
+            starting_condition = {"type": "preset", "starting_array": starting_y}
         elif starting_condition["type"] == "gaussian":
             starting_y[self.active_y] = gaussian_start(
                 self.cell_positions[self.active_y],
@@ -309,10 +380,11 @@ class ChimaeraGrid:
                 f"Unknown starting condition type, {starting_condition.type}."
             )
 
+        self.starting_condition = starting_condition
         self.starting_y = starting_y
         self.is_ready = True
 
-    def solve(self, solver_time_span, solver_method):
+    def solve(self, solver_time_span, solver_method, complete_msg=False):
         """Solve the grid collection using scipy's solve_ivp.
 
         Will solve the grid collection for the specified time span.
@@ -326,6 +398,8 @@ class ChimaeraGrid:
             Interval of integration (t0, tf), for solve_ivp.
         solver_method : string or OdeSolver
             Integration method for solve_ivp to use.
+        complete_msg : bool
+            Prints a short message on completion when True, default False
 
         Raises
         ------
@@ -337,7 +411,7 @@ class ChimaeraGrid:
             raise Exception("The ready method must be run before solving")
 
         # Store the arguments and solver method used
-        self.solver_time = solver_time_span
+        self.solver_time_span = solver_time_span
         self.solver_method = solver_method
 
         solver_start_time = time.perf_counter()
@@ -356,7 +430,8 @@ class ChimaeraGrid:
             grid.give_solution(solver.y[grid.start : grid.end])
             self.total_energy += grid.energy
 
-        print(f"Ran for {self.solver_elapsed_time:6.1f}s. {solver.message}")
+        if complete_msg:
+            print(f"Ran for {self.solver_elapsed_time:6.1f}s. {solver.message}")
 
         self.result = solver
         self.is_solved = True
@@ -526,8 +601,137 @@ class ChimaeraGrid:
 
         plt.show()
 
+    def to_dict(self):
+        """Returns a dictionary containing all the important attributes in the object
+
+        Returns
+        -------
+        dict
+            The dict containing all attributes
+        """
+        chimaera_grid_dict = {}
+        chimaera_grid_dict["name"] = self.name
+        chimaera_grid_dict["description"] = self.description
+        chimaera_grid_dict["grids"] = self.grids
+        chimaera_grid_dict["overlaps"] = self.overlaps
+        chimaera_grid_dict["total_num_cells"] = self.total_num_cells
+        chimaera_grid_dict["solver_time"] = self.solver_elapsed_time
+        chimaera_grid_dict["was_readied"] = self.is_ready
+        chimaera_grid_dict["solved_attempted"] = self.is_solved
+        chimaera_grid_dict["starting_condition"] = self.starting_condition
+        chimaera_grid_dict["solver_time_span"] = self.solver_time_span
+        chimaera_grid_dict["solver_method"] = self.solver_method
+        chimaera_grid_dict["total_energy"] = self.total_energy
+        # The result from solve_ivp is a subclass of OptimizeResult,
+        # which is a subclass of dict, so this dosn't change too much
+        # but can be serialised
+        chimaera_grid_dict["result"] = dict(self.result)
+
+        return chimaera_grid_dict
+
+    def get_header_dict(self):
+        """Create a new header dictionary
+
+        Gather some useful infomation to
+        add to save files of the object.
+
+        Returns
+        -------
+        dict
+            The header dictionary
+        """
+        header = {
+            "timestamp": datetime.now().isoformat(),
+            "git_hash": get_git_hash(),
+            "platform": platform.platform(),
+            "node": platform.node(),
+            "python_version": platform.python_version(),
+        }
+        return header
+
+    def save(
+        self,
+        save_path,
+        allow_overwrite=False,
+        sweep_name=None,
+        file_format="h5",
+        hdf5_path="/",
+    ):
+        """Save the Chimaera object to disk.
+
+        Parameters
+        ----------
+        save_path : Path
+            The path of the file to save to
+        allow_overwrite : bool, optional
+            Should existing files be overwritten?
+            By default False
+        sweep_name : str, optional
+            If part of a sweep, a name for the sweep can
+            be added to the file, by default None
+        file_format : str, optional
+            The file format to save to. Can be either "json"
+            or "h5", by default "h5". If save_path has a file extension
+            that will be used instead.
+        hdf5_path : str, optional
+            The path within the hdf5 file to write to, by default "/"
+
+        Raises
+        ------
+        ValueError
+            Will raise an exception is a unrecognized file format is asked for
+        """
+
+        dict_to_save = self.get_header_dict()
+        dict_to_save["sweep_name"] = sweep_name
+
+        if save_path.suffix == "":
+            # If the path dosn't have a file extension, add one
+            save_path = save_path.with_suffix("." + file_format)
+
+        # Create the directories/folders if they don't already exist
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if save_path.suffix == ".json":
+            # Can let the MBTBEncoder serialise this ChimaeraGrid class
+            dict_to_save["chimaera_grid"] = self
+            with save_path.open(mode="w" if allow_overwrite else "x") as save_file:
+                json.dump(dict_to_save, save_file, cls=MBTBEncoder)
+        elif save_path.suffix == ".h5":
+
+            # No help from the encoder here, need to go through the grids
+            # and overlaps and convert everything into a dictionary.
+            # Don't convert any numpy arrays or objects though.
+            chimaera_grid_dict = self.to_dict()
+            grid_dict_list = list()
+            overlap_dict_list = list()
+            for grid_obj in self.grids:
+                grid_dict_list.append(grid_obj.to_dict())
+            for overlap_obj in self.overlaps:
+                overlap_dict_list.append(overlap_obj.to_dict())
+            chimaera_grid_dict["grids"] = grid_dict_list
+            chimaera_grid_dict["overlaps"] = overlap_dict_list
+
+            dict_to_save["chimaera_grid"] = chimaera_grid_dict
+
+            hdf5storage.write(
+                dict_to_save,
+                path=hdf5_path,
+                # The h5py module dosn't like Path objects :(
+                filename=save_path.as_posix(),
+                store_python_metadata=True,
+                truncate_existing=allow_overwrite,
+            )
+        else:
+            raise ValueError(
+                f"'{save_path.suffix}' is not a supported format to save to"
+            )
+
     def __str__(self):
-        return f"Grid Collection of {len(self.grids)} grids and {len(self.overlaps)} overlaps, has {'' if self.is_solved else 'not '}been solved"
+        return (
+            f"Grid Collection of {len(self.grids)} grids and {len(self.overlaps)} overlaps, "
+            + f"has {'' if self.is_solved else 'not '}been solved"
+        )
 
 
 class Grid:
@@ -569,10 +773,10 @@ class Grid:
         calculated when `give_solution` is called
     jacobian : ndarray, shape(num_cells, num_cells)
         The jacobian for this grid
-    left_boundary_value : Boundary
-        The type of the left boundary
-    right_boundary_value : Boundary
-        The type of the right boundary
+    left_boundary_value : float
+        If the left boundary is type CONSTANT, it has this value
+    right_boundary_value : float
+        If the right boundary is type CONSTANT, it has this value
     start : int
         The left most index of this grid in the chimaera array
     end : int
@@ -635,6 +839,8 @@ class Grid:
         self.solution = None
         self.start = self.end = None
         self.energy = None
+        self.left_boundary_value = None
+        self.right_boundary_value = None
 
         # Check that left_boundary and right_boundary are from the Boundary enum
         # to avoid confusing errors later if they are not
@@ -861,6 +1067,60 @@ class Grid:
             jec[-1, 0] = -jec[-1, -2]
 
         self.jacobian = jec
+
+    def to_dict(self):
+        """Returns a dictionary containing all the important attributes in the object
+
+        Returns
+        -------
+        dict
+            The dict containing all attributes
+        """
+        grid_dict = {}
+        grid_dict["name"] = self.name
+        grid_dict["index"] = self.index
+        grid_dict["left_pos"] = self.left_pos
+        grid_dict["right_pos"] = self.right_pos
+        grid_dict["num_cells"] = self.num_cells
+        grid_dict["cell_widths"] = self.dx
+        grid_dict["alpha"] = self.alpha
+        grid_dict["cell_positions"] = self.cell_positions
+        # Save the active array as bools, otherwise it will be
+        # saved as floats
+        grid_dict["active_cells"] = self.active.astype(bool)
+        grid_dict["left_boundary"] = self.left_boundary.name
+        grid_dict["right_boundary"] = self.right_boundary.name
+        grid_dict["left_boundary_value"] = self.left_boundary_value
+        grid_dict["right_boundary_value"] = self.right_boundary_value
+        grid_dict["jacobian"] = self.jacobian
+        grid_dict["start_index"] = self.start
+        grid_dict["end_index"] = self.end
+        grid_dict["solution"] = self.solution
+        grid_dict["energy"] = self.energy
+        return grid_dict
+
+
+class MBTBEncoder(json.JSONEncoder):
+    """Custom JSON encoder
+    
+    Converts MBTB classes to dictionaries
+    and some numpy objects to python native
+    equivalents.
+    """    
+    
+    def default(self, obj):
+        if isinstance(obj, ChimaeraGrid):
+            return obj.to_dict()
+        if isinstance(obj, Grid):
+            return obj.to_dict()
+        if isinstance(obj, Overlap):
+            return obj.to_dict()
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, np.integer):
+            return int(obj)
+        else:
+            return super().default(obj)
 
 
 def gaussian_start(positions, height, centre, width, base):
@@ -1143,270 +1403,20 @@ def calc_jacobian(num_cells, alpha, dx):
     return jec
 
 
+def get_git_hash():
+    """Returns the last hash for the mbtb git repo
+
+    Returns
+    -------
+    str
+        The git hash
+    """
+    return subprocess.check_output(["git", "rev-parse", "HEAD"]).strip().decode("ascii")
+
+
 MODEL_LIST = {
     "diff_f": diffusion_fixed,
     "diff_p": diffusion_periodic,
     "diff_p_split": diffusion_periodic_split,
     "diff_chimaera": diffusion_chimaera,
 }
-
-Submesh = namedtuple("Submesh", "start end dx alpha")
-
-if __name__ == "__main__":
-
-    parser = argparse.ArgumentParser(
-        description="Multiblock TestBench - MSc Fusion Energy project"
-    )
-    parser.add_argument("model", help="The model to solve for", choices=MODEL_LIST)
-    parser.add_argument(
-        "-a",
-        "--anim",
-        help="Show an animated plot of the temperature over time",
-        action="store_true",
-    )
-    parser.add_argument(
-        "-i", "--imshow", help="Show 2D plot of position vs time", action="store_true"
-    )
-    parser.add_argument(
-        "-l",
-        "--line",
-        help="Show line plot with three different times",
-        action="store_true",
-    )
-    parser.add_argument(
-        "-s",
-        "--scatter",
-        help="Show scatter plot at two time points",
-        action="store_true",
-    )
-    parser.add_argument(
-        "--time",
-        help="The time to solve up to. Default is 3000",
-        type=int,
-        default=3000,
-    )
-    parser.add_argument(
-        "--dx",
-        help="The cell width in meters. Default is 0.01m. The split model will use this as the larger width",
-        type=float,
-        default=0.01,
-    )
-    parser.add_argument(
-        "--solver",
-        help="The solver method solve_ivp should use. Default is RK45.",
-        default="RK45",
-    )
-    parser.add_argument(
-        "--file",
-        help="Path to a grid description toml file, used by diff_chimaera model.",
-        type=Path,
-    )
-    args = parser.parse_args()
-
-    if args.model == "diff_chimaera":
-        if args.file:
-            with args.file.open(mode="r") as grid_descrip_file:
-                chimaera_grid_descrip = toml.load(grid_descrip_file)
-
-            grid_collection = ChimaeraGrid()
-            for grid_name, grid in chimaera_grid_descrip["grids"].items():
-                new_grid = Grid(
-                    grid_name,
-                    grid["left_pos"],
-                    grid["right_pos"],
-                    grid["dx"],
-                    grid["alpha"],
-                    left_boundary=Boundary[grid["left_boundary"]],
-                    right_boundary=Boundary[grid["right_boundary"]],
-                )
-                grid_collection.add_grid(
-                    new_grid,
-                    interface_width=grid["interface_width"],
-                    num_fringe_cells=grid["num_fringe_cells"],
-                )
-            grid_collection.ready(
-                starting_condition=chimaera_grid_descrip["starting_condition"]
-            )
-            print(grid_collection)
-            grid_collection.solve(
-                chimaera_grid_descrip["time_span"], chimaera_grid_descrip["solver"]
-            )
-            if args.scatter:
-                grid_collection.scatter_plot(0.001)
-
-        else:
-            base = Grid(
-                "base",
-                0,
-                1,
-                args.dx,
-                alpha=1,
-                left_boundary=Boundary.PERIODIC,
-                right_boundary=Boundary.PERIODIC,
-            )
-
-            over = Grid("right overlap", 0.45, 0.6, args.dx / 2)
-            left_over = Grid("left overlap", 0.2, 0.35, args.dx / 4)
-
-            grid_collection = ChimaeraGrid()
-            grid_collection.add_grid(base)
-            grid_collection.add_grid(over)
-            grid_collection.add_grid(left_over, num_fringe_cells=1)
-            # grid_collection.add_pos_value_starting_condition(0.4, 1000)
-            grid_collection.ready()
-            print(grid_collection)
-            grid_collection.solve((0, args.time), args.solver)
-            print(grid_collection)
-            # print(grid_collection.solver)
-            # grid_collection.scatter_plot()
-            grid_collection.print_energy_check()
-            if args.scatter:
-                grid_collection.scatter_plot(0.001)
-            # print(grid_collection.grids[)
-
-    else:
-        length = 1  # meters
-
-        if args.model == "diff_p_split":
-            split_pos = 0.5  # meters
-            num_left_cells = int(split_pos / args.dx)
-            num_right_cells = int((length - split_pos) / (args.dx / 2))
-
-            # rough description of the mesh made of submeshes with different cell widths
-            mesh_descrip = [
-                Submesh(1, num_left_cells, args.dx, 1),
-                Submesh(
-                    num_left_cells, num_left_cells + num_right_cells - 1, args.dx / 2, 1
-                ),
-                #  Submesh(num_left_cells, num_left_cells + num_right_cells - 1, args.dx),
-            ]
-            num_cells = num_left_cells + num_right_cells
-        else:
-            num_cells = int(length / args.dx)
-            mesh_descrip = [Submesh(1, num_cells - 1, args.dx, 1)]
-
-        dx_array = np.empty(num_cells)
-        alpha_array = np.empty(num_cells)
-        for mesh in mesh_descrip:
-            dx_array[mesh.start : mesh.end] = mesh.dx
-            alpha_array[mesh.start : mesh.end] = mesh.alpha
-        dx_array[0] = mesh_descrip[0].dx
-        dx_array[-1] = mesh_descrip[-1].dx
-        alpha_array[0] = mesh_descrip[0].alpha
-        alpha_array[-1] = mesh_descrip[-1].alpha
-        y = np.zeros(num_cells)
-        y[40] = 1000
-        # alpha = 1
-
-        J = calc_jacobian(num_cells, alpha_array, dx_array)
-
-        solver_start_time = time.perf_counter()
-        solver = solve_ivp(
-            MODEL_LIST[args.model],
-            (0, args.time),
-            y,
-            args=(alpha_array, dx_array, J),
-            method=args.solver,
-            # jac=J,
-        )
-        solver_elapsed_time = time.perf_counter() - solver_start_time
-
-        # Calculate the total energy for each timestep and the position of each cell
-        if args.model == "diff_p_split":
-            energy_array = np.zeros(len(solver.t))
-            for m in mesh_descrip:
-                energy_array[:] += np.sum(solver.y[m.start : m.end, :], axis=0) * m.dx
-            # The boundary cells are currently not included in the mesh description
-            energy_array[:] += solver.y[0, :] * mesh_descrip[0].dx
-            energy_array[:] += solver.y[-1, :] * mesh_descrip[-1].dx
-
-            cell_pos = np.zeros(num_cells)
-            cell_pos[0 : mesh_descrip[0].end] = np.linspace(
-                args.dx / 2, split_pos - (mesh_descrip[0].dx / 2), num_left_cells
-            )
-            cell_pos[mesh_descrip[1].start : mesh_descrip[1].end + 1] = np.linspace(
-                split_pos + (mesh_descrip[1].dx / 2),
-                length - (mesh_descrip[1].dx / 2),
-                num_right_cells,
-            )
-        else:
-            energy_array = np.sum(solver.y, axis=0) * args.dx
-            cell_pos = np.linspace(args.dx / 2, length - (args.dx / 2), num_cells)
-
-        print(solver)
-        print(f"Elapsed time for solver was {solver_elapsed_time} seconds")
-        print("Start energy", energy_array[0], "end energy", energy_array[-1])
-        print("Energy diff", energy_array[-1] - energy_array[0])
-
-        # Start of plots
-
-        if args.imshow:
-            # 2D plot of the cell index against time
-            plt.imshow(solver.y, cmap="inferno", aspect="auto", interpolation="none")
-
-            plt.colorbar()
-
-            plt.xlabel("Time")
-            plt.ylabel("Cell index")  # Cell index arn't corrected to positions yet
-            plt.grid(None)
-            plt.show()
-
-        if args.anim:
-            # Plot of the cell index streched to 2D and animated per timestep
-            fig, ax = plt.subplots()
-            frames = []
-            step = 50 if len(solver.t) > 1000 else 1
-            for step in range(0, len(solver.t), step):
-                frames.append(
-                    [
-                        ax.imshow(
-                            np.expand_dims(solver.y[:, step], axis=0),
-                            cmap="inferno",
-                            animated=True,
-                            aspect="auto",
-                        )
-                    ]
-                )
-            ani = animation.ArtistAnimation(
-                fig, frames, interval=20, blit=True, repeat_delay=5000
-            )
-
-            # ani.save("out.gif", writer='imagemagick')
-
-            plt.show()
-
-        if args.line:
-            # Line plot of the temperture against cell position for three points in time
-            plt.plot(
-                cell_pos,
-                solver.y[:, 10],
-                label=f"$t={solver.t[10]:.3e}$",
-                linestyle="--",
-            )
-            plt.plot(cell_pos, solver.y[:, 40], label=f"$t={solver.t[40]:.3e}$")
-            plt.plot(
-                cell_pos,
-                solver.y[:, -1],
-                label=f"$t={solver.t[-1]:.3e}$",
-                linestyle=":",
-            )
-
-            plt.legend()
-            plt.xlabel("Position")
-            plt.ylabel("Temperture")
-            plt.show()
-
-        if args.scatter:
-            plt.scatter(
-                cell_pos, solver.y[:, 10], label=f"$t={solver.t[10]:.3e}$", marker="D"
-            )
-            plt.scatter(cell_pos, solver.y[:, 40], label=f"$t={solver.t[40]:.3e}$")
-            plt.scatter(
-                cell_pos, solver.y[:, -1], label=f"$t={solver.t[-1]:.3e}$", marker="x"
-            )
-            plt.legend()
-            plt.xlabel("Position")
-            plt.ylabel("Temperture")
-            if args.model == "diff_p_split":
-                plt.axvline(split_pos, 0, 1)
-            plt.show()

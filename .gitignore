@@ -1,3 +1,6 @@
+out/
+.vscode/
+
 ## macOS stuff from https://github.com/github/gitignore/blob/master/Global/macOS.gitignore
 
 # General
