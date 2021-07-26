@@ -345,7 +345,7 @@ class ChimaeraGrid:
         """
 
         if len(self.grids) == 0:
-            raise Exception("At least one grid needs to be registerd before readying")
+            raise Exception("At least one grid needs to be registered before readying")
 
         counter = 0
         for grid in self.grids:
@@ -439,17 +439,18 @@ class ChimaeraGrid:
     def print_energy_check(self):
         """Print the energy difference for each grid and the total to terminal"""
 
-        if self.is_solved:
-            print(f"{'Grid':^20}  Start energy   End energy   Energy difference")
-            for grid in self.grids:
-                print(
-                    f"{grid.name:^20}  {grid.energy[0]:10.4f}     {grid.energy[-1]:10.4f}    {grid.energy[-1] - grid.energy[0]:10.4f}"
-                )
-            print(
-                f"{'Total':^20}  {self.total_energy[0]:10.4f}     {self.total_energy[-1]:10.4f}    {self.total_energy[-1] - self.total_energy[0]:10.4f}"
-            )
-        else:
+        if not self.is_solved:
             print("This grid collection has not been solved yet")
+            return
+
+        print(f"{'Grid':^20}  Start energy   End energy   Energy difference")
+        for grid in self.grids:
+            print(
+                f"{grid.name:^20}  {grid.energy[0]:10.4f}     {grid.energy[-1]:10.4f}    {grid.energy[-1] - grid.energy[0]:10.4f}"
+            )
+        print(
+            f"{'Total':^20}  {self.total_energy[0]:10.4f}     {self.total_energy[-1]:10.4f}    {self.total_energy[-1] - self.total_energy[0]:10.4f}"
+        )
 
     def scatter_plot(self, time_to_plot, overlap_markers=True):
         if not self.is_solved:
@@ -1102,12 +1103,12 @@ class Grid:
 
 class MBTBEncoder(json.JSONEncoder):
     """Custom JSON encoder
-    
+
     Converts MBTB classes to dictionaries
     and some numpy objects to python native
     equivalents.
-    """    
-    
+    """
+
     def default(self, obj):
         if isinstance(obj, ChimaeraGrid):
             return obj.to_dict()

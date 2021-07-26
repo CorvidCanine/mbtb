@@ -64,12 +64,11 @@ class Parameter:
 
             if self.length is None:
                 self.length = len(para_grid["array"])
-            else:
-                if self.length != len(para_grid["array"]):
-                    raise ValueError(
-                        f"The length of the parameter, {name}, must be the same for all grids.",
-                        f"Length so far was {self.length}, length for grid {grid_name} is {len(para_grid['array'])}",
-                    )
+            elif self.length != len(para_grid["array"]):
+                raise ValueError(
+                    f"The length of the parameter, {name}, must be the same for all grids.",
+                    f"Length so far was {self.length}, length for grid {grid_name} is {len(para_grid['array'])}",
+                )
             self.descrip = descrip
 
     def __iter__(self):
@@ -77,16 +76,16 @@ class Parameter:
 
     def __next__(self):
 
-        if self._index < self.length:
-            grid_value_dict = {}
-            for grid_name, para_grid in self.descrip.items():
-                grid_value_dict[grid_name] = para_grid["array"][self._index]
-
-            self._index += 1
-
-            return grid_value_dict
-        else:
+        if self._index >= self.length:
             raise StopIteration
+
+        grid_value_dict = {}
+        for grid_name, para_grid in self.descrip.items():
+            grid_value_dict[grid_name] = para_grid["array"][self._index]
+
+        self._index += 1
+
+        return grid_value_dict
 
 
 def run(chimaera_grid_descrip):
