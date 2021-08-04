@@ -1,0 +1,12 @@
+name = "sweep_dx_base_overlap_const"
+description = "Sweep the cell width of the base grid, keeping the overlap constant. "
+solvers = ["Radau"]
+
+[parameters]
+[parameters.dx]
+
+[parameters.dx.base]
+type = "range"
+start = 0.01
+end = 0.0001
+number = 100

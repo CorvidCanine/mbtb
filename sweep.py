@@ -123,10 +123,21 @@ def run(chimaera_grid_descrip):
             # If we're not ignoring, re-raise the error
             raise e
     chimaera_grid.ready(starting_condition=chimaera_grid_descrip["starting_condition"])
-    chimaera_grid.solve(
-        chimaera_grid_descrip["time_span"],
-        chimaera_grid_descrip["solver"],
-    )
+    try:
+        chimaera_grid.solve(
+            chimaera_grid_descrip["time_span"],
+            chimaera_grid_descrip["solver"],
+        )
+    except ValueError as e:
+        # TODO Temporarily excepting ValueErrors thrown by interp_func
+        # Need to fix this, as overlaps that arn't going to work are meant
+        # to be caught before that point.
+        if args.ignore_overlap_errors:
+            print("Value Error")
+            return chimaera_grid
+        else:
+            raise e
+
     return chimaera_grid
 
 
@@ -138,26 +149,32 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "sweep",
-        help="Path to a grid description json file, used by diff_chimaera model.",
+        help="Path to a sweep description toml file",
         type=Path,
     )
     parser.add_argument(
         "grid",
-        help="Path to a grid description json file, used by diff_chimaera model.",
+        help="Path to a grid description toml file",
         type=Path,
     )
     parser.add_argument(
         "--save",
         help="Path to save results to, a subdirectory will be created from"
-        + " the name of the sweep",
+        + " the name of the sweep. Default is 'out'.",
         type=Path,
         default=Path("out"),
     )
     parser.add_argument(
         "-i",
-        help="Ignore overlap errors, saving the failed run and continuing",
+        help="Ignore overlap errors. Save the failed run and continue",
         action="store_true",
         dest="ignore_overlap_errors",
+    )
+    parser.add_argument(
+        "-f",
+        help="Force use of the sweep if there are grids missing. Missing grids will be ignored.",
+        action="store_true",
+        dest="ignore_missing_grids",
     )
     parser.add_argument(
         "-j",
@@ -184,7 +201,7 @@ if __name__ == "__main__":
     else:
         solver_list = sweep_descrip["solvers"]
 
-    save_path = args.save / sweep_descrip["name"]
+    save_path = args.save / sweep_descrip["name"] / chimaera_grid_descrip["name"]
     file_counter = 0
 
     for solver in solver_list:
@@ -203,7 +220,13 @@ if __name__ == "__main__":
                     descrip_to_run["solver"] = solver
 
                     for grid_name, para_value in para_i_values.items():
-                        descrip_to_run["grids"][grid_name][para_i.name] = para_value
+                        try:
+                            descrip_to_run["grids"][grid_name][para_i.name] = para_value
+                        except KeyError as e:
+                            if not args.ignore_missing_grids:
+                                # If the flag to ignore grids in the sweep description file that
+                                # are missing is not set, re-raise the KeyError
+                                raise e
 
                     chimaera_grid = run(descrip_to_run)
                     chimaera_grid.save(
@@ -239,14 +262,24 @@ if __name__ == "__main__":
                             descrip_to_run["solver"] = solver
 
                             for grid_name, para_value in para_i_values.items():
-                                descrip_to_run["grids"][grid_name][
-                                    para_i.name
-                                ] = para_value
+                                try:
+                                    descrip_to_run["grids"][grid_name][
+                                        para_i.name
+                                    ] = para_value
+                                except KeyError as e:
+                                    if not args.ignore_missing_grids:
+                                        # If the flag to ignore grids in the sweep description file that
+                                        # are missing is not set, re-raise the KeyError
+                                        raise e
 
                             for grid_name, para_value in para_j_values.items():
-                                descrip_to_run["grids"][grid_name][
-                                    para_j.name
-                                ] = para_value
+                                try:
+                                    descrip_to_run["grids"][grid_name][
+                                        para_j.name
+                                    ] = para_value
+                                except KeyError as e:
+                                    if not args.ignore_missing_grids:
+                                        raise e
 
                             chimaera_grid = run(descrip_to_run)
                             chimaera_grid.save(

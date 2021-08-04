@@ -1,5 +1,5 @@
-name = "single_overlap"
-description = ""
+name = "no_overlap_periodic"
+description = "A simple base grid with periodic boundary conditions."
 time_span = [0, 2000]
 solver = "Radau"
 
@@ -21,13 +21,3 @@ left_boundary = "PERIODIC"
 right_boundary = "PERIODIC"
 interface_width = nan
 num_fringe_cells = nan
-
-[grids.overlap]
-left_pos = 0.45
-right_pos = 0.6
-dx = 0.005
-alpha = 1
-left_boundary = "WALL"
-right_boundary = "WALL"
-interface_width = 0.03
-num_fringe_cells = 1

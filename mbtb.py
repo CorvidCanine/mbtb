@@ -5,6 +5,7 @@ import subprocess
 import platform
 import hdf5storage
 import numpy as np
+import xarray as xr
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
 from scipy.interpolate import interp1d
@@ -366,7 +367,7 @@ class ChimaeraGrid:
             starting_y[40] = 1000
             starting_condition = {"type": "preset", "starting_array": starting_y}
         elif starting_condition["type"] == "gaussian":
-            starting_y[self.active_y] = gaussian_start(
+            starting_y[self.active_y] = gaussian(
                 self.cell_positions[self.active_y],
                 starting_condition["height"],
                 starting_condition["centre"],
@@ -435,6 +436,61 @@ class ChimaeraGrid:
 
         self.result = solver
         self.is_solved = True
+        self._calculate_uniform_and_continuous_solutions()
+
+    def smallest_cell_width(self):
+        smallest_cell_width = None
+        for grid in self.grids:
+            smallest_dx_grid = grid.dx.min()
+            if smallest_cell_width is None:
+                smallest_cell_width = smallest_dx_grid
+            elif smallest_cell_width > smallest_dx_grid:
+                smallest_cell_width = smallest_dx_grid
+
+        return smallest_cell_width
+
+    def _calculate_uniform_and_continuous_solutions(self):
+        smallest_dx = self.smallest_cell_width()
+
+        number_cells = int(1 / smallest_dx)
+        self.uniform_solution_positions = np.linspace(
+            0 + (smallest_dx) / 2, 1 - (smallest_dx) / 2, number_cells
+        )
+        self.uniform_solution = np.empty((number_cells, len(self.result.t)))
+        self.uniform_solution[:] = np.NaN
+        self.cont_solution_positions = np.empty(0)
+        for grid in self.grids:
+            active_bool = grid.active.astype(bool)
+            try:
+                self.cont_solution = np.append(
+                    self.cont_solution, grid.solution[active_bool, :], axis=0
+                )
+            except AttributeError:
+                self.cont_solution = grid.solution[active_bool, :]
+
+            self.cont_solution_positions = np.append(
+                self.cont_solution_positions, grid.cell_positions[active_bool]
+            )
+
+            interp_func = interp1d(
+                grid.cell_positions,
+                grid.solution,
+                axis=0,
+                bounds_error=False,
+                assume_sorted=True,
+            )
+            interped_grid = interp_func(self.uniform_solution_positions)
+            self.uniform_solution[~np.isnan(interped_grid)] = interped_grid[
+                ~np.isnan(interped_grid)
+            ]
+
+        sorted_cont_order = np.argsort(self.cont_solution_positions)
+        self.cont_solution_positions = np.take_along_axis(
+            self.cont_solution_positions, sorted_cont_order, 0
+        )
+        self.cont_solution = np.take(self.cont_solution, sorted_cont_order, 0)
+
+        self.uniform_cell_width = smallest_dx
 
     def print_energy_check(self):
         """Print the energy difference for each grid and the total to terminal"""
@@ -611,22 +667,31 @@ class ChimaeraGrid:
             The dict containing all attributes
         """
         chimaera_grid_dict = {}
+        chimaera_grid_dict["solved_attempted"] = self.is_solved
+        if self.is_solved:
+            chimaera_grid_dict["uniform_solution"] = self.uniform_solution
+            chimaera_grid_dict["uniform_cell_width"] = self.uniform_cell_width
+            chimaera_grid_dict["cont_solution"] = self.cont_solution
+            chimaera_grid_dict["chont_solution_pos"] = self.cont_solution_positions
+            chimaera_grid_dict["solver_time"] = self.solver_elapsed_time
+            chimaera_grid_dict["total_energy"] = self.total_energy
+            chimaera_grid_dict[
+                "uniform_solution_positions"
+            ] = self.uniform_solution_positions
+            # The result from solve_ivp is a subclass of OptimizeResult,
+            # which is a subclass of dict, so this dosn't change too much
+            # but can be serialised
+            chimaera_grid_dict["result"] = dict(self.result)
+
         chimaera_grid_dict["name"] = self.name
         chimaera_grid_dict["description"] = self.description
         chimaera_grid_dict["grids"] = self.grids
         chimaera_grid_dict["overlaps"] = self.overlaps
         chimaera_grid_dict["total_num_cells"] = self.total_num_cells
-        chimaera_grid_dict["solver_time"] = self.solver_elapsed_time
         chimaera_grid_dict["was_readied"] = self.is_ready
-        chimaera_grid_dict["solved_attempted"] = self.is_solved
         chimaera_grid_dict["starting_condition"] = self.starting_condition
         chimaera_grid_dict["solver_time_span"] = self.solver_time_span
         chimaera_grid_dict["solver_method"] = self.solver_method
-        chimaera_grid_dict["total_energy"] = self.total_energy
-        # The result from solve_ivp is a subclass of OptimizeResult,
-        # which is a subclass of dict, so this dosn't change too much
-        # but can be serialised
-        chimaera_grid_dict["result"] = dict(self.result)
 
         return chimaera_grid_dict
 
