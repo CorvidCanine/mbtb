@@ -1189,8 +1189,12 @@ class MBTBEncoder(json.JSONEncoder):
             return super().default(obj)
 
 
-def gaussian_start(positions, height, centre, width, base):
-    """Creates a guassian starting condition.
+def gaussian(positions, height, centre, width, base, time=0):
+    """Calculates a gaussian for the passed positions.
+
+    For creating a starting gaussian and for finding
+    the solution to a diffusion guassian over time. Works with
+    xarrays.
 
     Parameters
     ----------
@@ -1207,12 +1211,19 @@ def gaussian_start(positions, height, centre, width, base):
         gaussian is.
     base : float
         A base constant that the gaussian sits upon
+    time : float or ndarray, shape(num_cells)
+        The time of the gaussian when representing a diffusion
+        solution. 1 will be added to the time.
 
     Returns
     -------
     ndarray, shape(num_cells)
         A starting array of values
     """
+    time = time + 1
+    return base + height / np.sqrt(time) * np.exp(
+            -((positions - centre) ** 2) / (2 * width * width * time)
+        )
 
     return base + height * np.exp(-((positions - centre) ** 2) / (2 * width * width))
 
