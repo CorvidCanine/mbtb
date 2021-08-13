@@ -106,6 +106,13 @@ def run(chimaera_grid_descrip):
                 left_boundary=mbtb.Boundary[grid["left_boundary"]],
                 right_boundary=mbtb.Boundary[grid["right_boundary"]],
             )
+            if mbtb.Boundary[grid["left_boundary"]] == mbtb.Boundary.CONSTANT:
+                new_grid.set_constant_boundary_values(left=grid["left_boundary_value"])
+            if mbtb.Boundary[grid["right_boundary"]] == mbtb.Boundary.CONSTANT:
+                new_grid.set_constant_boundary_values(
+                    right=grid["right_boundary_value"]
+                )
+
             chimaera_grid.add_grid(
                 new_grid,
                 interface_width=grid["interface_width"],
@@ -122,6 +129,7 @@ def run(chimaera_grid_descrip):
         else:
             # If we're not ignoring, re-raise the error
             raise e
+
     chimaera_grid.ready(starting_condition=chimaera_grid_descrip["starting_condition"])
     try:
         chimaera_grid.solve(

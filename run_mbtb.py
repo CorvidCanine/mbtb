@@ -82,6 +82,15 @@ if __name__ == "__main__":
                     left_boundary=mbtb.Boundary[grid["left_boundary"]],
                     right_boundary=mbtb.Boundary[grid["right_boundary"]],
                 )
+                if mbtb.Boundary[grid["left_boundary"]] == mbtb.Boundary.CONSTANT:
+                    new_grid.set_constant_boundary_values(
+                        left=grid["left_boundary_value"]
+                    )
+                if mbtb.Boundary[grid["right_boundary"]] == mbtb.Boundary.CONSTANT:
+                    new_grid.set_constant_boundary_values(
+                        right=grid["right_boundary_value"]
+                    )
+
                 grid_collection.add_grid(
                     new_grid,
                     interface_width=grid["interface_width"],

@@ -350,6 +350,21 @@ class ChimaeraGrid:
 
         counter = 0
         for grid in self.grids:
+            if (
+                grid.left_boundary == Boundary.CONSTANT
+                and grid.left_boundary_value is None
+            ):
+                raise ValueError(
+                    "Can not ready. CONSTANT left boundary is being used but a value has not been set."
+                )
+            if (
+                grid.right_boundary == Boundary.CONSTANT
+                and grid.right_boundary_value is None
+            ):
+                raise ValueError(
+                    "Can not ready. CONSTANT right boundary is being used but a value has not been set."
+                )
+
             grid.set_grid_start(counter)
             counter += grid.num_cells
             self.cell_positions = np.concatenate(
@@ -976,7 +991,7 @@ class Grid:
             The value for the right hand boundary to be held at, by default None
         """
 
-        if left:
+        if left is not None:
             if self.left_boundary is Boundary.CONSTANT:
                 self.left_boundary_value = left
             else:
@@ -984,7 +999,7 @@ class Grid:
                     f"The left boundary is type {self.left_boundary}, so will not use the set value."
                 )
 
-        if right:
+        if right is not None:
             if self.right_boundary is Boundary.CONSTANT:
                 self.right_boundary_value = right
             else:
@@ -1114,7 +1129,10 @@ class Grid:
             jec[0, 1] = right_alpha_grad / ((self.dx[1] + self.dx[0]) / 2) ** 2
 
             jec[0, 0] = -(jec[0, -1] + jec[0, 1])
-        elif self.left_boundary is Boundary.WALL:
+        elif (
+            self.left_boundary is Boundary.WALL
+            or self.left_boundary is Boundary.CONSTANT
+        ):
             right_alpha_grad = (self.alpha[0] + self.alpha[1]) / 2
             jec[0, 1] = right_alpha_grad / ((self.dx[1] + self.dx[0]) / 2) ** 2
             jec[0, 0] = -jec[0, -1]
@@ -1127,7 +1145,10 @@ class Grid:
             jec[-1, 0] = right_alpha_grad / ((self.dx[0] + self.dx[-1]) / 2) ** 2
 
             jec[-1, -1] = -(jec[-1, -2] + jec[-1, 0])
-        elif self.right_boundary is Boundary.WALL:
+        elif (
+            self.right_boundary is Boundary.WALL
+            or self.right_boundary is Boundary.CONSTANT
+        ):
             left_alpha_grad = (self.alpha[-1] + self.alpha[-2]) / 2
             jec[-1, -2] = left_alpha_grad / ((self.dx[-2] + self.dx[-1]) / 2) ** 2
             jec[-1, 0] = -jec[-1, -2]
@@ -1244,7 +1265,7 @@ def diffusion_fixed(t, y, alpha, dx):
     return y1
 
 
-def diffusion_periodic(t, y, alpha, dx):
+def diffusion_periodic(t, y, alpha, dx, J):
 
     y1 = np.zeros(len(y))
 
