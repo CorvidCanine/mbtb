@@ -51,8 +51,12 @@ class Parameter:
                 para_grid["array"] = np.linspace(
                     para_grid["start"], para_grid["end"], para_grid["number"]
                 )
+            elif para_grid["type"] == "logrange":
+                para_grid["array"] = np.logspace(
+                    para_grid["start"], para_grid["end"], para_grid["number"]
+                )
             elif para_grid["type"] == "array":
-                pass
+                raise NotImplementedError()
             elif para_grid["type"] == "ratio":
                 para_grid["array"] = (
                     descrip[para_grid["grid"]]["array"] * para_grid["factor"]
@@ -234,7 +238,9 @@ if __name__ == "__main__":
                             if not args.ignore_missing_grids:
                                 # If the flag to ignore grids in the sweep description file that
                                 # are missing is not set, re-raise the KeyError
-                                raise e
+                                raise KeyError(
+                                    f"The grid '{grid_name}' is not in this chimaera grid. The -f flag can suppress this message."
+                                )
 
                     chimaera_grid = run(descrip_to_run)
                     chimaera_grid.save(

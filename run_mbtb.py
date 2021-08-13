@@ -99,13 +99,40 @@ if __name__ == "__main__":
             grid_collection.ready(
                 starting_condition=chimaera_grid_descrip["starting_condition"]
             )
-            print(grid_collection)
             grid_collection.solve(
-                chimaera_grid_descrip["time_span"], chimaera_grid_descrip["solver"]
+                chimaera_grid_descrip["time_span"],
+                chimaera_grid_descrip["solver"],
+                complete_msg=True,
             )
+
             if args.scatter:
                 grid_collection.scatter_plot(0)
                 grid_collection.scatter_plot(0.01)
+
+                # TODO move this to its own flag or remove
+                plt.loglog(
+                    grid_collection.result.t,
+                    grid_collection.result.y[200, :],
+                    marker="o",
+                    label="numerical",
+                )
+                plt.loglog(
+                    grid_collection.result.t,
+                    mbtb.gaussian(
+                        grid_collection.cell_positions[200],
+                        1000,
+                        2,
+                        0.05,
+                        0,
+                        time=grid_collection.result.t,
+                    ),
+                    label="analytic",
+                    marker="x",
+                )
+                plt.xlabel("Time /s")
+                plt.ylabel("Temperature at centre /K")
+                plt.legend()
+                plt.show()
 
         else:
             base = mbtb.Grid(

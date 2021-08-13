@@ -1,0 +1,17 @@
+name = "log_dx_sweep"
+description = "A logarithmic sweep of the cell widths, with an overlap with half the base cell width."
+solvers = ["BDF"]
+
+[parameters]
+[parameters.dx]
+
+[parameters.dx.base]
+type = "logrange"
+start = -1
+end = -4
+number = 40
+
+[parameters.dx.overlap]
+type = "ratio"
+grid = "base"
+factor = 0.5
