@@ -97,19 +97,30 @@ if __name__ == "__main__":
     # After updating pandas from 1.2 to 1.3, the columns must be created before
     # trying to assign values to them when using xarray functions
     df["peak_diff"] = df["mean_diff"] = np.nan
-    if True:
-        # comparison_xr = xr_list[
-        #     df[df["chimaera_name"] == "no_overlap_periodic"]["base_cell_width"].idxmin()
-        # ]
-        comparison_xr = xr_list[
-            df[df["chimaera_name"] == "single_overlap"]["base_cell_width"].idxmin()
-        ]
-    else:
-        comparison_xr = xr_list[df["base_cell_width"].idxmin()]
+
+    # if True:
+    #     comparison_xr = xr_list[
+    #         df[df["chimaera_name"] == "no_overlap_periodic"]["base_cell_width"].idxmin()
+    #     ]
+    #     # comparison_xr = xr_list[
+    #     #     df[df["chimaera_name"] == "single_overlap"]["base_cell_width"].idxmin()
+    #     # ]
+    # else:
+    #     comparison_xr = xr_list[df["base_cell_width"].idxmin()]
+
+    # comparison_xr = mbtb.gaussian()
 
     for index, grid in df.iterrows():
-        diff = xr_list[index].interp_like(comparison_xr) - comparison_xr
-        df.at[index, "peak_diff"] = diff.max()
+        # diff = xr_list[index].interp_like(comparison_xr) - comparison_xr
+        diff = xr_list[index] - mbtb.gaussian(
+            xr_list[index]["pos"],
+            starting_condition["height"],
+            starting_condition["centre"],
+            starting_condition["width"],
+            starting_condition["base"],
+            time=xr_list[index]["time"],
+        )
+        df.at[index, "peak_diff"] = np.abs(diff.sel(time=1)).max()
         df.at[index, "mean_diff"] = diff.mean()
         diff_xr_list.append(diff.max(dim="pos"))
 

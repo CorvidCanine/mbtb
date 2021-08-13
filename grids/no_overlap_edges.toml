@@ -1,8 +1,7 @@
-name = "no_overlap_periodic"
-version = 2
-description = "A simple base grid with periodic boundary conditions."
+name = "no_overlap_edges"
+description = "A simple base grid with boundary conditions."
 time_span = [0, 250]
-solver = "Radau"
+solver = "BDF"
 
 [starting_condition]
 type = "gaussian"
@@ -18,7 +17,9 @@ left_pos = 0
 right_pos = 4
 dx = 0.01
 alpha = 0.005
-left_boundary = "PERIODIC"
-right_boundary = "PERIODIC"
+left_boundary = "CONSTANT"
+right_boundary = "CONSTANT"
+left_boundary_value = 0
+right_boundary_value = 0
 interface_width = nan
 num_fringe_cells = nan

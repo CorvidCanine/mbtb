@@ -1264,9 +1264,9 @@ def gaussian(positions, height, centre, width, base, time=0):
         A starting array of values
     """
     time = time + 1
-    return base + height / np.sqrt(time) * np.exp(
-            -((positions - centre) ** 2) / (2 * width * width * time)
-        )
+    return base + (height / np.sqrt(2 * time)) * np.exp(
+        -((positions - centre) ** 2) / (8 * width * width * time)
+    )
 
     return base + height * np.exp(-((positions - centre) ** 2) / (2 * width * width))
 
