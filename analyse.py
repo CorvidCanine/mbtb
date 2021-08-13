@@ -48,17 +48,39 @@ if __name__ == "__main__":
     diff_xr_list = list()
     df = pd.DataFrame()
     save_files = list(args.path.rglob("*.h5"))
+
+    if len(save_files) == 0:
+        print(f"There are no h5 files in the path {args.path}")
+        raise SystemExit
+
+    starting_condition = None
     # save_files = save_files[0:5]
     for file_path in tqdm(save_files, unit="files"):
         data = hdf5storage.read(filename=file_path.as_posix())
+
+        if starting_condition is None:
+            starting_condition = data["chimaera_grid"]["starting_condition"]
+        elif starting_condition != data["chimaera_grid"]["starting_condition"]:
+            raise Warning(
+                "Run {file_path} has a different starting condition, skipping"
+            )
+            continue
+
         # print(data)
 
-        solved_grid = data["chimaera_grid"]["cont_solution"]
+        # solved_grid = data["chimaera_grid"]["cont_solution"]
+        solved_grid = data["chimaera_grid"]["cont_solution_comp"]
         solved_grid_positions = data["chimaera_grid"]["chont_solution_pos"]
+
+        # solved_xr = xr.DataArray(
+        #     solved_grid,
+        #     coords=[solved_grid_positions, data["chimaera_grid"]["result"]["t"]],
+        #     dims=["pos", "time"],
+        # )
 
         solved_xr = xr.DataArray(
             solved_grid,
-            coords=[solved_grid_positions, data["chimaera_grid"]["result"]["t"]],
+            coords=[solved_grid_positions, [0.01, 0.05, 0.1, 0.5, 1, 10, 100]],
             dims=["pos", "time"],
         )
 

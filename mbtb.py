@@ -437,13 +437,14 @@ class ChimaeraGrid:
             self.starting_y,
             args=(self,),
             method=solver_method,
+            dense_output=True,
             # jac=J,
         )
         self.solver_elapsed_time = time.perf_counter() - solver_start_time
 
         self.total_energy = np.zeros(len(solver.t))
         for grid in self.grids:
-            grid.give_solution(solver.y[grid.start : grid.end])
+            grid.give_solution(solver.y[grid.start : grid.end], dense=solver.sol)
             self.total_energy += grid.energy
 
         if complete_msg:
@@ -480,8 +481,18 @@ class ChimaeraGrid:
                 self.cont_solution = np.append(
                     self.cont_solution, grid.solution[active_bool, :], axis=0
                 )
+                # Append the timesteps for the continous solution at comparison timesteps
+                self.cont_solution_comparison = np.append(
+                    self.cont_solution,
+                    grid.comparison_timesteps[active_bool, :],
+                    axis=0,
+                )
             except AttributeError:
+                # For the first grid, there is not yet anything to append to
                 self.cont_solution = grid.solution[active_bool, :]
+                self.cont_solution_comparison = grid.comparison_timesteps[
+                    active_bool, :
+                ]
 
             self.cont_solution_positions = np.append(
                 self.cont_solution_positions, grid.cell_positions[active_bool]
@@ -504,6 +515,9 @@ class ChimaeraGrid:
             self.cont_solution_positions, sorted_cont_order, 0
         )
         self.cont_solution = np.take(self.cont_solution, sorted_cont_order, 0)
+        self.cont_solution_comparison = np.take(
+            self.cont_solution_comparison, sorted_cont_order, 0
+        )
 
         self.uniform_cell_width = smallest_dx
 
@@ -687,6 +701,7 @@ class ChimaeraGrid:
             chimaera_grid_dict["uniform_solution"] = self.uniform_solution
             chimaera_grid_dict["uniform_cell_width"] = self.uniform_cell_width
             chimaera_grid_dict["cont_solution"] = self.cont_solution
+            chimaera_grid_dict["cont_solution_comp"] = self.cont_solution_comparison
             chimaera_grid_dict["chont_solution_pos"] = self.cont_solution_positions
             chimaera_grid_dict["solver_time"] = self.solver_elapsed_time
             chimaera_grid_dict["total_energy"] = self.total_energy
@@ -696,7 +711,10 @@ class ChimaeraGrid:
             # The result from solve_ivp is a subclass of OptimizeResult,
             # which is a subclass of dict, so this dosn't change too much
             # but can be serialised
-            chimaera_grid_dict["result"] = dict(self.result)
+            result_dict = dict(self.result)
+            # Need to remove sol (the dense solution) as it can't be serialsied
+            del result_dict["sol"]
+            chimaera_grid_dict["result"] = result_dict
 
         chimaera_grid_dict["name"] = self.name
         chimaera_grid_dict["description"] = self.description
@@ -965,7 +983,7 @@ class Grid:
     def __str__(self):
         return f"Grid {self.index}, from {self.left_pos} to {self.right_pos} with {self.num_cells} cells"
 
-    def give_solution(self, solution):
+    def give_solution(self, solution, dense=None):
         """Pass the solved grid to the grid object.
 
         Parameters
@@ -977,6 +995,9 @@ class Grid:
 
         self.solution = solution
         self.energy = np.sum(solution * self.dx[:, np.newaxis], axis=0)
+        self.comparison_timesteps = dense([0.01, 0.05, 0.1, 0.5, 1, 10, 100])[
+            self.start : self.end
+        ]
 
     def set_constant_boundary_values(self, left=None, right=None):
         """If this grid has a constant boundary, the value of it can be specified
@@ -1183,6 +1204,7 @@ class Grid:
         grid_dict["start_index"] = self.start
         grid_dict["end_index"] = self.end
         grid_dict["solution"] = self.solution
+        grid_dict["comparison_timesteps"] = self.comparison_timesteps
         grid_dict["energy"] = self.energy
         return grid_dict
 
