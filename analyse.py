@@ -58,31 +58,38 @@ if __name__ == "__main__":
     for file_path in tqdm(save_files, unit="files"):
         data = hdf5storage.read(filename=file_path.as_posix())
 
+        if not data["chimaera_grid"]["solved_attempted"]:
+            continue
+
         if starting_condition is None:
             starting_condition = data["chimaera_grid"]["starting_condition"]
         elif starting_condition != data["chimaera_grid"]["starting_condition"]:
-            raise Warning(
-                "Run {file_path} has a different starting condition, skipping"
-            )
+            # raise Warning(
+            #     "Run {file_path} has a different starting condition, skipping"
+            # )
+            print("Run {file_path} has a different starting condition, skipping")
             continue
 
         # print(data)
 
-        # solved_grid = data["chimaera_grid"]["cont_solution"]
-        solved_grid = data["chimaera_grid"]["cont_solution_comp"]
-        solved_grid_positions = data["chimaera_grid"]["chont_solution_pos"]
-
-        # solved_xr = xr.DataArray(
-        #     solved_grid,
-        #     coords=[solved_grid_positions, data["chimaera_grid"]["result"]["t"]],
-        #     dims=["pos", "time"],
-        # )
+        solved_grid = data["chimaera_grid"]["cont_solution"]
+        # solved_grid = data["chimaera_grid"]["cont_solution_comp"]
+        try:
+            solved_grid_positions = data["chimaera_grid"]["cont_solution_pos"]
+        except KeyError:
+            solved_grid_positions = data["chimaera_grid"]["chont_solution_pos"]
 
         solved_xr = xr.DataArray(
             solved_grid,
-            coords=[solved_grid_positions, [0.01, 0.05, 0.1, 0.5, 1, 10, 100]],
+            coords=[solved_grid_positions, data["chimaera_grid"]["result"]["t"]],
             dims=["pos", "time"],
         )
+
+        # solved_xr = xr.DataArray(
+        #     solved_grid,
+        #     coords=[solved_grid_positions, [0.01, 0.05, 0.1, 0.5, 1, 10, 100]],
+        #     dims=["pos", "time"],
+        # )
 
         # for other_xr in xr_list:
         #     # This assumes that the new grid has a the smaller cell width
@@ -120,7 +127,7 @@ if __name__ == "__main__":
             starting_condition["base"],
             time=xr_list[index]["time"],
         )
-        df.at[index, "peak_diff"] = np.abs(diff.sel(time=1)).max()
+        df.at[index, "peak_diff"] = np.abs(diff.sel(time=1, method="nearest")).max()
         df.at[index, "mean_diff"] = diff.mean()
         diff_xr_list.append(diff.max(dim="pos"))
 
@@ -136,8 +143,7 @@ if __name__ == "__main__":
 
     df.plot.scatter(
         x="base_cell_width", y="mean_diff", c="chimaera_name", cmap="viridis"
-    )
-    plt.show()
+    )    plt.show()
 
     # diff = xr_list[9] - xr_list[0].interp_like(xr_list[9])
     # print(diff)

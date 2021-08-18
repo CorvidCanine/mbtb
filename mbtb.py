@@ -5,7 +5,6 @@ import subprocess
 import platform
 import hdf5storage
 import numpy as np
-import xarray as xr
 import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
 from scipy.interpolate import interp1d
@@ -495,7 +494,7 @@ class ChimaeraGrid:
                 )
                 # Append the timesteps for the continous solution at comparison timesteps
                 self.cont_solution_comparison = np.append(
-                    self.cont_solution,
+                    self.cont_solution_comparison,
                     grid.comparison_timesteps[active_bool, :],
                     axis=0,
                 )
@@ -714,7 +713,7 @@ class ChimaeraGrid:
             chimaera_grid_dict["uniform_cell_width"] = self.uniform_cell_width
             chimaera_grid_dict["cont_solution"] = self.cont_solution
             chimaera_grid_dict["cont_solution_comp"] = self.cont_solution_comparison
-            chimaera_grid_dict["chont_solution_pos"] = self.cont_solution_positions
+            chimaera_grid_dict["cont_solution_pos"] = self.cont_solution_positions
             chimaera_grid_dict["solver_time"] = self.solver_elapsed_time
             chimaera_grid_dict["total_energy"] = self.total_energy
             chimaera_grid_dict[
@@ -1215,9 +1214,10 @@ class Grid:
         grid_dict["jacobian"] = self.jacobian
         grid_dict["start_index"] = self.start
         grid_dict["end_index"] = self.end
-        grid_dict["solution"] = self.solution
-        grid_dict["comparison_timesteps"] = self.comparison_timesteps
-        grid_dict["energy"] = self.energy
+        if self.solution is not None:
+            grid_dict["solution"] = self.solution
+            grid_dict["comparison_timesteps"] = self.comparison_timesteps
+            grid_dict["energy"] = self.energy
         return grid_dict
 
 
