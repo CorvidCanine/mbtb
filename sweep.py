@@ -47,7 +47,10 @@ class Parameter:
 
         for grid_name, para_grid in descrip.items():
 
-            if para_grid["type"] == "range":
+            if para_grid["type"] == "array":
+                # Need a pass here so we don't hit the error message
+                pass
+            elif para_grid["type"] == "range":
                 para_grid["array"] = np.linspace(
                     para_grid["start"], para_grid["end"], para_grid["number"]
                 )
@@ -55,8 +58,6 @@ class Parameter:
                 para_grid["array"] = np.logspace(
                     para_grid["start"], para_grid["end"], para_grid["number"]
                 )
-            elif para_grid["type"] == "array":
-                raise NotImplementedError()
             elif para_grid["type"] == "ratio":
                 para_grid["array"] = (
                     descrip[para_grid["grid"]]["array"] * para_grid["factor"]
@@ -121,6 +122,7 @@ def run(chimaera_grid_descrip):
                 new_grid,
                 interface_width=grid["interface_width"],
                 num_fringe_cells=grid["num_fringe_cells"],
+                interp_kind=grid["interp_kind"],
             )
     except mbtb.OverlapError as e:
         if args.ignore_overlap_errors:

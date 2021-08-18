@@ -59,7 +59,14 @@ class Overlap:
         The range of positions of the cells to be interpolated too.
     """
 
-    def __init__(self, lower_grid, over_grid, interface_width=0.03, num_fringe_cells=1):
+    def __init__(
+        self,
+        lower_grid,
+        over_grid,
+        interface_width=0.03,
+        num_fringe_cells=1,
+        interp_kind="linear",
+    ):
         """Initialisation method for the Overlap class.
 
         Parameters
@@ -85,6 +92,7 @@ class Overlap:
         self.failed_to_create = False
         self.lower_grid = lower_grid
         self.over_grid = over_grid
+        self.interp_kind = interp_kind
 
         if num_fringe_cells < 1:
             raise OverlapError("The number of overlap cells must be at least 1")
@@ -215,6 +223,7 @@ class Overlap:
         overlap_dict["over_left_interp_positions"] = self.over_left_interp_positions
         overlap_dict["over_right_interp_range"] = self.over_right_interp_range
         overlap_dict["over_right_interp_positions"] = self.over_right_interp_positions
+        overlap_dict["interp_kind"] = self.interp_kind
 
         return overlap_dict
 
@@ -283,7 +292,9 @@ class ChimaeraGrid:
         self.is_ready = False
         self.is_solved = False
 
-    def add_grid(self, new_grid, interface_width=0.03, num_fringe_cells=1):
+    def add_grid(
+        self, new_grid, interface_width=0.03, num_fringe_cells=1, interp_kind="linear"
+    ):
         """Registers a new grid with the ChimaeraGrid
 
         An Overlap will be created if any grids are below this new
@@ -312,6 +323,7 @@ class ChimaeraGrid:
                         new_grid,
                         interface_width=interface_width,
                         num_fringe_cells=num_fringe_cells,
+                        interp_kind=interp_kind,
                     )
                 )
 
@@ -1339,6 +1351,7 @@ def diffusion_chimaera(t, y, chimaera_grid):
                 + ovlp.lower_left_interp_range[0] : ovlp.lower_grid.start
                 + ovlp.lower_left_interp_range[1]
             ],
+            kind=ovlp.interp_kind,
         )
         y[
             ovlp.over_grid.start
@@ -1354,6 +1367,7 @@ def diffusion_chimaera(t, y, chimaera_grid):
                 + ovlp.over_left_interp_range[0] : ovlp.over_grid.start
                 + ovlp.over_left_interp_range[1]
             ],
+            kind=ovlp.interp_kind,
         )
         y[
             ovlp.lower_grid.start
@@ -1369,6 +1383,7 @@ def diffusion_chimaera(t, y, chimaera_grid):
                 + ovlp.lower_right_interp_range[0] : ovlp.lower_grid.start
                 + ovlp.lower_right_interp_range[1]
             ],
+            kind=ovlp.interp_kind,
         )
         y[
             ovlp.over_grid.start
@@ -1384,6 +1399,7 @@ def diffusion_chimaera(t, y, chimaera_grid):
                 + ovlp.over_right_interp_range[0] : ovlp.over_grid.start
                 + ovlp.over_right_interp_range[1]
             ],
+            kind=ovlp.interp_kind,
         )
         y[
             ovlp.lower_grid.start
