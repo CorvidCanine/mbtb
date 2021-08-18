@@ -3,6 +3,8 @@ import argparse
 import toml
 import numpy as np
 from pathlib import Path
+from datetime import datetime
+from tqdm import tqdm
 
 
 class Parameter:
@@ -30,7 +32,7 @@ class Parameter:
         Parameters
         ----------
         name : str
-            The parameter name
+            The parameter name/id
         descrip : dict
             The type of parameter sweep and any needed
             values for it
@@ -92,6 +94,18 @@ class Parameter:
 
         return grid_value_dict
 
+    def __len__(self):
+        """Magic function to return the length of the parameter array
+
+        This helps tqdm create progress bars
+
+        Returns
+        -------
+        int
+            The number of parameter values
+        """
+        return self.length
+
 
 def run(chimaera_grid_descrip):
 
@@ -147,12 +161,51 @@ def run(chimaera_grid_descrip):
         # Need to fix this, as overlaps that arn't going to work are meant
         # to be caught before that point.
         if args.ignore_overlap_errors:
-            print("Value Error")
+            # print("Value Error")
             return chimaera_grid
         else:
             raise e
 
     return chimaera_grid
+
+
+def parameter_run_loop(paras_to_sweep, parameters, descrip, file_counter, colours):
+
+    para_key = paras_to_sweep.pop(0)
+    para = Parameter(para_key, parameters[para_key])
+
+    for para_values in tqdm(
+        para, desc="Sweeping " + para.name, colour=colours.pop(0), leave=False
+    ):
+
+        # For each grid this parameter sweep affects, apply the new value
+        for grid_name, para_value in para_values.items():
+            try:
+                descrip["grids"][grid_name][para.name] = para_value
+            except KeyError as e:
+                if not args.ignore_missing_grids:
+                    # If the flag to ignore grids in the sweep description file that
+                    # are missing is not set, re-raise the KeyError
+                    raise KeyError(
+                        f"The grid '{grid_name}' is not in this chimaera grid. The -f flag can suppress this error."
+                    )
+
+        if len(paras_to_sweep) == 0:
+            # Solve the grid
+            chimaera_grid = run(descrip)
+            # Save the grid to file
+            chimaera_grid.save(
+                # save_path / str(file_counter),
+                save_path / datetime.now().isoformat(timespec="seconds"),
+                sweep_name=sweep_descrip["name"],
+                file_format=save_format,
+            )
+            file_counter += 1
+        else:
+            # Pass on a copy of paras_to_sweep, so each para_value run needs a fresh copy
+            parameter_run_loop(
+                paras_to_sweep.copy(), parameters, descrip, file_counter, colours
+            )
 
 
 if __name__ == "__main__":
@@ -198,10 +251,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    if args.save_to_json:
-        save_format = "json"
-    else:
-        save_format = "h5"
+    save_format = "json" if args.save_to_json else "h5"
 
     with args.sweep.open(mode="r") as sweep_file:
         sweep_descrip = toml.load(sweep_file)
@@ -217,98 +267,16 @@ if __name__ == "__main__":
 
     save_path = args.save / sweep_descrip["name"] / chimaera_grid_descrip["name"]
     file_counter = 0
-
     for solver in solver_list:
-        # Loop though all the parameters that are to be sweeped
-        for descrip_para_i_name, descrip_para_i in sweep_descrip["parameters"].items():
+        # Need to make a copy of the grid description so we don't
+        # alter the original for future runs
+        descrip_to_run = chimaera_grid_descrip.copy()
+        descrip_to_run["solver"] = solver
+        # Make a copy of the parameters keys to be sweeped and convert it to a list
+        # so we can pop parameters off the list as we go.
+        paras_to_sweep = list(sweep_descrip["parameters"].keys())
+        tqdm_colours = ["green", "blue", "red", "yellow", "cyan", "magenta", "black"]
 
-            para_i = Parameter(descrip_para_i_name, descrip_para_i)
-
-            if len(sweep_descrip["parameters"]) == 1:
-                # Loop though each value to be tested for the parameter
-                for para_i_values in para_i:
-                    # Need to make a copy of the grid description so we don't
-                    # alter the original for future runs
-                    descrip_to_run = chimaera_grid_descrip.copy()
-                    # As we just made a copy, the solver needs to be set every loop
-                    descrip_to_run["solver"] = solver
-
-                    for grid_name, para_value in para_i_values.items():
-                        try:
-                            descrip_to_run["grids"][grid_name][para_i.name] = para_value
-                        except KeyError as e:
-                            if not args.ignore_missing_grids:
-                                # If the flag to ignore grids in the sweep description file that
-                                # are missing is not set, re-raise the KeyError
-                                raise KeyError(
-                                    f"The grid '{grid_name}' is not in this chimaera grid. The -f flag can suppress this message."
-                                )
-
-                    chimaera_grid = run(descrip_to_run)
-                    chimaera_grid.save(
-                        save_path / str(file_counter),
-                        sweep_name=sweep_descrip["name"],
-                        file_format=save_format,
-                    )
-
-                    if chimaera_grid.is_solved:
-                        print(
-                            f"Run {file_counter} completed in {chimaera_grid.solver_elapsed_time:6.1f}s"
-                        )
-                    else:
-                        print(f"Run {file_counter} was not solved")
-
-                    file_counter += 1
-
-            else:
-                # If there is more than one parameter being sweeped, a second
-                # nested loop is needed
-                for descrip_para_j_name, descrip_para_j in sweep_descrip[
-                    "parameters"
-                ].items():
-
-                    if descrip_para_i_name == descrip_para_j_name:
-                        continue
-
-                    para_j = Parameter(descrip_para_j_name, descrip_para_j)
-
-                    for para_i_values in para_i:
-                        for para_j_values in para_j:
-                            descrip_to_run = chimaera_grid_descrip.copy()
-                            descrip_to_run["solver"] = solver
-
-                            for grid_name, para_value in para_i_values.items():
-                                try:
-                                    descrip_to_run["grids"][grid_name][
-                                        para_i.name
-                                    ] = para_value
-                                except KeyError as e:
-                                    if not args.ignore_missing_grids:
-                                        # If the flag to ignore grids in the sweep description file that
-                                        # are missing is not set, re-raise the KeyError
-                                        raise e
-
-                            for grid_name, para_value in para_j_values.items():
-                                try:
-                                    descrip_to_run["grids"][grid_name][
-                                        para_j.name
-                                    ] = para_value
-                                except KeyError as e:
-                                    if not args.ignore_missing_grids:
-                                        raise e
-
-                            chimaera_grid = run(descrip_to_run)
-                            chimaera_grid.save(
-                                save_path / str(file_counter),
-                                sweep_name=sweep_descrip["name"],
-                                file_format=save_format,
-                            )
-
-                            if chimaera_grid.is_solved:
-                                print(
-                                    f"Run {file_counter} completed in {chimaera_grid.solver_elapsed_time:6.1f}s"
-                                )
-                            else:
-                                print(f"Run {file_counter} was not solved")
-
-                            file_counter += 1
+        parameter_run_loop(
+            paras_to_sweep, sweep_descrip["parameters"], descrip_to_run, 0, tqdm_colours
+        )
