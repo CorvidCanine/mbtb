@@ -202,9 +202,9 @@ def parameter_run_loop(paras_to_sweep, parameters, descrip, file_counter, colour
             )
             file_counter += 1
         else:
-            # Pass on a copy of paras_to_sweep, so each para_value run needs a fresh copy
+            # Need to copy paras_to_sweep and colours so pops dont carry over between loops
             parameter_run_loop(
-                paras_to_sweep.copy(), parameters, descrip, file_counter, colours
+                paras_to_sweep.copy(), parameters, descrip, file_counter, colours.copy()
             )
 
 
