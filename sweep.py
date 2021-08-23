@@ -196,7 +196,7 @@ def parameter_run_loop(paras_to_sweep, parameters, descrip, file_counter, colour
             # Save the grid to file
             chimaera_grid.save(
                 # save_path / str(file_counter),
-                save_path / datetime.now().isoformat(timespec="seconds"),
+                save_path / datetime.now().strftime("%Y-%m-%dT%H-%M-%S"),
                 sweep_name=sweep_descrip["name"],
                 file_format=save_format,
             )
