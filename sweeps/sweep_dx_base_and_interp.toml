@@ -1,0 +1,24 @@
+name = "sweep_dx_base_overlap_interp"
+description = "Sweep the cell width of the base grid, keeping the overlap constant. "
+solvers = ["RK45"]
+
+[parameters]
+[parameters.interp_kind]
+
+[parameters.interp_kind.overlap]
+type = "array"
+array = ["linear", "quadratic", "cubic"]
+
+[parameters.interface_width.overlap]
+type = "range"
+start = 0.001
+end = 0.1
+number = 20
+
+[parameters.dx]
+
+[parameters.dx.base]
+type = "range"
+start = 0.01
+end = 0.0005
+number = 20

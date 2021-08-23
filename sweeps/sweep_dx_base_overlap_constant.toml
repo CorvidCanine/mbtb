@@ -9,4 +9,4 @@ solvers = ["Radau"]
 type = "range"
 start = 0.01
 end = 0.0001
-number = 100
+number = 50

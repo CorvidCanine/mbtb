@@ -1,0 +1,37 @@
+name = "single_overlap_edges"
+description = ""
+time_span = [0, 250]
+solver = "RK45"
+
+[starting_condition]
+type = "gaussian"
+height = 1000
+centre = 2
+width = 0.05
+base = 0
+
+[grids]
+
+[grids.base]
+left_pos = 0
+right_pos = 4
+dx = 0.01
+alpha = 0.005
+left_boundary = "CONSTANT"
+right_boundary = "CONSTANT"
+left_boundary_value = 0
+right_boundary_value = 0
+interface_width = nan
+num_fringe_cells = nan
+interp_kind = "linear"
+
+[grids.overlap]
+left_pos = 2.1
+right_pos = 3.1
+dx = 0.002
+alpha = 0.005
+left_boundary = "WALL"
+right_boundary = "WALL"
+interface_width = 0.02
+num_fringe_cells = 1
+interp_kind = "linear"
