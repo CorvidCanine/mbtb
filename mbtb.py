@@ -139,8 +139,11 @@ class Overlap:
         ]
 
         if (
-            len(self.lower_left_interp_positions) < 2
-            or self.over_left_fringe_positions > self.lower_left_interp_positions[-1]
+            len(self.lower_left_interp_positions)
+            < 2
+            # or (
+            #     self.over_left_fringe_positions > self.lower_left_interp_positions[-1]
+            # ).any()
         ):
             self.failed_to_create = True
             raise OverlapError(
@@ -187,8 +190,11 @@ class Overlap:
         ]
 
         if (
-            len(self.lower_right_interp_positions) < 2
-            or self.over_right_fringe_positions < self.lower_right_interp_positions[0]
+            len(self.lower_right_interp_positions)
+            < 2
+            # or (
+            #     self.over_right_fringe_positions < self.lower_right_interp_positions[0]
+            # ).any()
         ):
             self.failed_to_create = True
             raise OverlapError(
@@ -448,7 +454,9 @@ class ChimaeraGrid:
             self.starting_y,
             args=(self,),
             method=solver_method,
-            dense_output=True,
+            # rtol=1e-5,
+            # atol=1e-8,
+            # dense_output=True,
             # jac=J,
         )
         self.solver_elapsed_time = time.perf_counter() - solver_start_time
@@ -477,14 +485,14 @@ class ChimaeraGrid:
         return smallest_cell_width
 
     def _calculate_uniform_and_continuous_solutions(self):
-        smallest_dx = self.smallest_cell_width()
+        # smallest_dx = self.smallest_cell_width()
 
-        number_cells = int(1 / smallest_dx)
-        self.uniform_solution_positions = np.linspace(
-            0 + (smallest_dx) / 2, 1 - (smallest_dx) / 2, number_cells
-        )
-        self.uniform_solution = np.empty((number_cells, len(self.result.t)))
-        self.uniform_solution[:] = np.NaN
+        # number_cells = int(1 / smallest_dx)
+        # self.uniform_solution_positions = np.linspace(
+        #     0 + (smallest_dx) / 2, 1 - (smallest_dx) / 2, number_cells
+        # )
+        # self.uniform_solution = np.empty((number_cells, len(self.result.t)))
+        # self.uniform_solution[:] = np.NaN
         self.cont_solution_positions = np.empty(0)
         for grid in self.grids:
             active_bool = grid.active.astype(bool)
@@ -492,45 +500,45 @@ class ChimaeraGrid:
                 self.cont_solution = np.append(
                     self.cont_solution, grid.solution[active_bool, :], axis=0
                 )
-                # Append the timesteps for the continous solution at comparison timesteps
-                self.cont_solution_comparison = np.append(
-                    self.cont_solution_comparison,
-                    grid.comparison_timesteps[active_bool, :],
-                    axis=0,
-                )
+                # # Append the timesteps for the continous solution at comparison timesteps
+                # self.cont_solution_comparison = np.append(
+                #     self.cont_solution_comparison,
+                #     grid.comparison_timesteps[active_bool, :],
+                #     axis=0,
+                # )
             except AttributeError:
                 # For the first grid, there is not yet anything to append to
                 self.cont_solution = grid.solution[active_bool, :]
-                self.cont_solution_comparison = grid.comparison_timesteps[
-                    active_bool, :
-                ]
+                # self.cont_solution_comparison = grid.comparison_timesteps[
+                #     active_bool, :
+                # ]
 
             self.cont_solution_positions = np.append(
                 self.cont_solution_positions, grid.cell_positions[active_bool]
             )
 
-            interp_func = interp1d(
-                grid.cell_positions,
-                grid.solution,
-                axis=0,
-                bounds_error=False,
-                assume_sorted=True,
-            )
-            interped_grid = interp_func(self.uniform_solution_positions)
-            self.uniform_solution[~np.isnan(interped_grid)] = interped_grid[
-                ~np.isnan(interped_grid)
-            ]
+            # interp_func = interp1d(
+            #     grid.cell_positions,
+            #     grid.solution,
+            #     axis=0,
+            #     bounds_error=False,
+            #     assume_sorted=True,
+            # )
+            # interped_grid = interp_func(self.uniform_solution_positions)
+            # self.uniform_solution[~np.isnan(interped_grid)] = interped_grid[
+            #     ~np.isnan(interped_grid)
+            # ]
 
         sorted_cont_order = np.argsort(self.cont_solution_positions)
         self.cont_solution_positions = np.take_along_axis(
             self.cont_solution_positions, sorted_cont_order, 0
         )
         self.cont_solution = np.take(self.cont_solution, sorted_cont_order, 0)
-        self.cont_solution_comparison = np.take(
-            self.cont_solution_comparison, sorted_cont_order, 0
-        )
+        # self.cont_solution_comparison = np.take(
+        #     self.cont_solution_comparison, sorted_cont_order, 0
+        # )
 
-        self.uniform_cell_width = smallest_dx
+        # self.uniform_cell_width = smallest_dx
 
     def print_energy_check(self):
         """Print the energy difference for each grid and the total to terminal"""
@@ -556,6 +564,15 @@ class ChimaeraGrid:
         fig, axs = plt.subplots(
             2, 1, sharex="col", gridspec_kw={"height_ratios": [3, 1]}
         )
+
+        axs[0].plot(
+            self.grids[0].cell_positions,
+            gaussian(self.grids[0].cell_positions, 1000, 2, 0.05, 0, time=time_to_plot),
+            label="Analytical sol.",
+            c="#12928d",
+            zorder=-5,
+        )
+
         # The solver produces output at times it fixes is sutible,
         # so we need to find the closest time with output to the requested time
         time_to_plot_index = np.abs(self.result.t - time_to_plot).argmin()
@@ -565,7 +582,8 @@ class ChimaeraGrid:
             axs[0].scatter(
                 grid.cell_positions[active_bool],
                 grid.solution[active_bool, time_to_plot_index],
-                label=f"Grid: {grid.name}",
+                label=f"{grid.name}",
+                # s=13,
             )
 
             axs[1].barh(
@@ -605,6 +623,7 @@ class ChimaeraGrid:
                     marker=interp_marker,
                     s=overlap_marker_size,
                     c=overlap_marker_colour,
+                    label="Interp. cell",
                 )
 
                 axs[0].scatter(
@@ -618,6 +637,7 @@ class ChimaeraGrid:
                     marker=fringe_marker,
                     s=overlap_marker_size,
                     c=overlap_marker_colour,
+                    label="Fringe cell",
                 )
 
                 axs[0].scatter(
@@ -709,23 +729,31 @@ class ChimaeraGrid:
         chimaera_grid_dict = {}
         chimaera_grid_dict["solved_attempted"] = self.is_solved
         if self.is_solved:
-            chimaera_grid_dict["uniform_solution"] = self.uniform_solution
-            chimaera_grid_dict["uniform_cell_width"] = self.uniform_cell_width
+            #     chimaera_grid_dict["uniform_solution"] = self.uniform_solution
+            #     chimaera_grid_dict["uniform_cell_width"] = self.uniform_cell_width
             chimaera_grid_dict["cont_solution"] = self.cont_solution
-            chimaera_grid_dict["cont_solution_comp"] = self.cont_solution_comparison
+            # chimaera_grid_dict["cont_solution_comp"] = self.cont_solution_comparison
             chimaera_grid_dict["cont_solution_pos"] = self.cont_solution_positions
             chimaera_grid_dict["solver_time"] = self.solver_elapsed_time
             chimaera_grid_dict["total_energy"] = self.total_energy
-            chimaera_grid_dict[
-                "uniform_solution_positions"
-            ] = self.uniform_solution_positions
+            # chimaera_grid_dict[
+            #     "uniform_solution_positions"
+            # ] = self.uniform_solution_positions
             # The result from solve_ivp is a subclass of OptimizeResult,
             # which is a subclass of dict, so this dosn't change too much
             # but can be serialised
-            result_dict = dict(self.result)
-            # Need to remove sol (the dense solution) as it can't be serialsied
-            del result_dict["sol"]
-            chimaera_grid_dict["result"] = result_dict
+
+            #### Not saving the full solution object to save time and storage ####
+            # result_dict = dict(self.result)
+            # try:
+            #     # Need to remove sol (the dense solution) as it can't be seralized
+            #     del result_dict["sol"]
+            # except KeyError:
+            #     pass
+            #     # if running without dense_output then there is no sol object
+            # chimaera_grid_dict["result"] = result_dict
+            ####                                                              ####
+            chimaera_grid_dict["time"] = self.result.t
 
         chimaera_grid_dict["name"] = self.name
         chimaera_grid_dict["description"] = self.description
@@ -736,6 +764,7 @@ class ChimaeraGrid:
         chimaera_grid_dict["starting_condition"] = self.starting_condition
         chimaera_grid_dict["solver_time_span"] = self.solver_time_span
         chimaera_grid_dict["solver_method"] = self.solver_method
+        # chimaera_grid_dict["solver_method"] = "BDF_tol"
 
         return chimaera_grid_dict
 
@@ -1006,6 +1035,7 @@ class Grid:
 
         self.solution = solution
         self.energy = np.sum(solution * self.dx[:, np.newaxis], axis=0)
+        if dense is not None:
         self.comparison_timesteps = dense([0.01, 0.05, 0.1, 0.5, 1, 10, 100])[
             self.start : self.end
         ]
@@ -1216,8 +1246,13 @@ class Grid:
         grid_dict["end_index"] = self.end
         if self.solution is not None:
             grid_dict["solution"] = self.solution
-            grid_dict["comparison_timesteps"] = self.comparison_timesteps
             grid_dict["energy"] = self.energy
+            try:
+            grid_dict["comparison_timesteps"] = self.comparison_timesteps
+            except AttributeError:
+                pass
+                # If there is no comparison timesteps, don't need to save them
+
         return grid_dict
 
 
@@ -1409,10 +1444,9 @@ def diffusion_chimaera(t, y, chimaera_grid):
 
     for grid in chimaera_grid.grids:
 
+        central_diag = np.diag(grid.jacobian)
         left_alpha = (grid.alpha[1:] + grid.alpha[:-1]) / 2
-        left_J = (
-            np.diagonal(grid.jacobian)[1:] + np.diagonal(grid.jacobian, offset=-1)
-        ) / 2
+        left_J = (central_diag[1:] + np.diag(grid.jacobian, k=-1)) / 2
         left_gradient = (
             2
             * (y[grid.start : grid.end - 1] - y[grid.start + 1 : grid.end])
@@ -1425,9 +1459,7 @@ def diffusion_chimaera(t, y, chimaera_grid):
         )
 
         right_alpha = (grid.alpha[:-1] + grid.alpha[1:]) / 2
-        right_J = (
-            np.diagonal(grid.jacobian)[:-1] + np.diagonal(grid.jacobian, offset=1)
-        ) / 2
+        right_J = (central_diag[:-1] + np.diag(grid.jacobian, k=1)) / 2
         right_gradient = (
             2
             * (y[grid.start : grid.end - 1] - y[grid.start + 1 : grid.end])
