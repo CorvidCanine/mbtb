@@ -1036,9 +1036,9 @@ class Grid:
         self.solution = solution
         self.energy = np.sum(solution * self.dx[:, np.newaxis], axis=0)
         if dense is not None:
-        self.comparison_timesteps = dense([0.01, 0.05, 0.1, 0.5, 1, 10, 100])[
-            self.start : self.end
-        ]
+            self.comparison_timesteps = dense([0.01, 0.05, 0.1, 0.5, 1, 10, 100])[
+                self.start : self.end
+            ]
 
     def set_constant_boundary_values(self, left=None, right=None):
         """If this grid has a constant boundary, the value of it can be specified
